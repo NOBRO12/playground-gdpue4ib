@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+data/agent.db
+data/agent.db-journal
+data/agent.db-wal
+data/agent.db-shm
