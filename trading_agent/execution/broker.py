@@ -50,5 +50,8 @@ class AlpacaCryptoBroker:
     def equity(self) -> float:
         return float(self._client.get_account().equity)
 
+    def cash(self) -> float:
+        return float(self._client.get_account().cash)
+
     def positions(self) -> dict[str, float]:
         return {p.symbol: float(p.qty) for p in self._client.get_all_positions()}

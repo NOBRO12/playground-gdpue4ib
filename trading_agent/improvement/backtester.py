@@ -35,7 +35,7 @@ def run(
 ) -> BacktestResult:
     strat: Strategy = from_spec(spec)
     sig = strat.signals(bars)
-    regimes = regime.classify(bars)
+    regime_at = regime.classify(bars).to_dict()
 
     cost = (fee_bps + slippage_bps) / 1e4
     pos_pct = spec.risk.position_pct
@@ -89,7 +89,7 @@ def run(
                         "pnl_r": pnl_r,
                         "reason_entry": entry_reason,
                         "reason_exit": exit_reason,
-                        "regime": str(regimes.get(entry_ts, "")) if entry_ts is not None else "",
+                        "regime": str(regime_at.get(entry_ts, "")) if entry_ts is not None else "",
                     }
                 )
                 in_pos = False

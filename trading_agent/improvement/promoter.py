@@ -26,6 +26,8 @@ class Decision:
 def _gate(champ: Scorecard, chal: Scorecard) -> tuple[bool, str]:
     if chal.n_trades < config.PROMOTE_MIN_TRADES:
         return False, "insufficient_trades"
+    if chal.sharpe < config.PROMOTE_MIN_ABS_SHARPE:
+        return False, "absolute_sharpe_floor"
     if chal.sharpe - champ.sharpe < config.PROMOTE_MIN_SHARPE_DELTA:
         return False, "oos_sharpe_regression"
     # max_dd is negative; ratio of magnitudes vs champion floor of 1% to avoid div-by-tiny

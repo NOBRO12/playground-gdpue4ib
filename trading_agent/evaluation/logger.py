@@ -42,6 +42,44 @@ def log_trade(conn: sqlite3.Connection, **fields: Any) -> int:
     return int(cur.lastrowid)
 
 
+def close_open_trade(
+    conn: sqlite3.Connection,
+    *,
+    symbol: str,
+    version: str,
+    exit_ts: str,
+    exit_px: float,
+    reason_exit: str,
+) -> bool:
+    """Close the most recent open trade for ``symbol`` under ``version``.
+
+    Returns True if a row was updated. Used by the live loop where entry and
+    exit happen on different ticks; the backtester does not need this (it
+    inserts complete rows when a position closes).
+    """
+    cur = conn.execute(
+        """
+        SELECT id, entry_px, qty FROM trades
+        WHERE symbol = ? AND version = ? AND exit_ts IS NULL
+        ORDER BY id DESC LIMIT 1
+        """,
+        (symbol, version),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return False
+    pnl_usd = (exit_px - row["entry_px"]) * row["qty"]
+    conn.execute(
+        """
+        UPDATE trades
+        SET exit_ts = ?, exit_px = ?, pnl_usd = ?, reason_exit = ?
+        WHERE id = ?
+        """,
+        (exit_ts, exit_px, pnl_usd, reason_exit, row["id"]),
+    )
+    return True
+
+
 def log_equity(
     conn: sqlite3.Connection,
     ts: str,

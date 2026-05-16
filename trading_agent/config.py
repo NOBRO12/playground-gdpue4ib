@@ -17,9 +17,11 @@ class Settings:
     strategies_dir: Path
     is_dir: Path
     oos_dir: Path
+    live_state_path: Path
     alpaca_key: str | None
     alpaca_secret: str | None
     anthropic_key: str | None
+    proposer_model: str
     log_level: str
 
 
@@ -30,9 +32,13 @@ def load() -> Settings:
         strategies_dir=Path(os.environ.get("AGENT_STRATEGIES_DIR", root / "strategies")),
         is_dir=Path(os.environ.get("AGENT_IS_DIR", root / "data" / "is")),
         oos_dir=Path(os.environ.get("AGENT_OOS_DIR", root / "data" / "oos")),
+        live_state_path=Path(
+            os.environ.get("AGENT_LIVE_STATE_PATH", root / "data" / "live_state.json")
+        ),
         alpaca_key=os.environ.get("ALPACA_KEY"),
         alpaca_secret=os.environ.get("ALPACA_SECRET"),
         anthropic_key=os.environ.get("ANTHROPIC_API_KEY"),
+        proposer_model=os.environ.get("AGENT_PROPOSER_MODEL", "claude-sonnet-4-6"),
         log_level=os.environ.get("AGENT_LOG_LEVEL", "INFO"),
     )
 
@@ -56,3 +62,4 @@ NO_SHORTS = True
 PROMOTE_MIN_SHARPE_DELTA = 0.10
 PROMOTE_MAX_DD_RATIO = 1.20
 PROMOTE_MIN_TRADES = 30
+PROMOTE_MIN_ABS_SHARPE = 0.20

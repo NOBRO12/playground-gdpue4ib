@@ -44,9 +44,21 @@ See `examples/worked_example.md` for a full trace.
 ```
 python -m trading_agent init-db
 python -m trading_agent backtest --spec <spec.json> --bars <bars.csv> [--window START:END] [--oos]
-python -m trading_agent improve [--dry-run] [--fixture-proposal <path>] [--oos-dir <dir>]
+python -m trading_agent improve [--dry-run] [--fixture-proposal <path>] [--oos-dir <dir>] [--expect accept|reject]
 python -m trading_agent paper [--once]
+python -m trading_agent reset-kill-switch
 ```
+
+`improve --dry-run --expect=<accept|reject>` exits 0 when the decision matches,
+2 when it doesn't. CI uses this to assert the worked example's rejection path.
+
+## Live state
+
+The live loop persists peak equity, day-start equity, day boundary, trades-today,
+and the kill-switch flag to `data/live_state.json` (override with
+`AGENT_LIVE_STATE_PATH`). Without this, the guardrails would be reconstructed
+from "current equity" each tick and never fire. The kill switch is sticky once
+tripped; clear it manually with `python -m trading_agent reset-kill-switch`.
 
 ## Strategy spec — the LLM's only output surface
 
@@ -84,9 +96,11 @@ Blocks write a row to `guardrail_events` with full context.
 Both specs are scored on the same OOS bars. Challenger is promoted only if
 **all** criteria hold:
 
+- `oos_n_trades(challenger) >= 30`
+- `oos_sharpe(challenger) >= 0.20` (absolute floor — prevents promotion when
+  the champion has degenerated and any half-decent challenger clears the delta)
 - `oos_sharpe(challenger) - oos_sharpe(champion) >= 0.10`
 - `|oos_max_dd(challenger)| <= 1.2 * |oos_max_dd(champion)|`
-- `oos_n_trades(challenger) >= 30`
 
 On accept: atomic swap of `strategies/champion.json`, old champion moves to
 `strategies/archive/`, status flipped in `strategy_versions`.
@@ -125,7 +139,7 @@ trading_agent/
   config.py                 # env + guardrail constants
   cli.py / __main__.py      # subcommands
   scheduler.py              # APScheduler jobs
-  execution/                # broker, data, portfolio
+  execution/                # broker, data, portfolio, state
   strategy/                 # spec (LLM contract), donchian, ema_cross, registry
   evaluation/               # db, logger, metrics, regime
   improvement/              # proposer, backtester, promoter, versioning

@@ -1,10 +1,11 @@
 """Single CLI entry point.
 
 Subcommands:
-    init-db       Create tables and seed champion version row.
-    backtest      Run a deterministic backtest of a spec against bars on disk.
-    improve       Run the full proposer -> backtest -> promoter loop.
-    paper         Live paper loop (requires Alpaca + Anthropic keys).
+    init-db            Create tables and seed champion version row.
+    backtest           Run a deterministic backtest of a spec against bars on disk.
+    improve            Run the full proposer -> backtest -> promoter loop.
+    paper              Live paper loop (requires Alpaca + Anthropic keys).
+    reset-kill-switch  Clear the kill_switch_tripped flag in live state.
 """
 from __future__ import annotations
 
@@ -15,13 +16,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pandas as pd
-
 from . import config
-from .evaluation import db
+from .evaluation import db, logger as evlogger
+from .evaluation import regime as regime_mod
 from .execution import data
-from .improvement import backtester, promoter
-from .improvement import versioning
+from .execution.state import LiveState
+from .improvement import backtester, promoter, versioning
 from .strategy.registry import load_spec
 from .strategy.spec import StrategySpec
 
@@ -125,7 +125,11 @@ def _improve(args: argparse.Namespace) -> int:
     )
 
     if args.dry_run:
-        return 0 if decision.accepted else 0
+        expected_accept = args.expect == "accept"
+        if decision.accepted == expected_accept:
+            return 0
+        log.warning("expected %s but got %s", args.expect, "accept" if decision.accepted else "reject")
+        return 2
 
     with db.session(s.db_path) as conn:
         conn.execute(
@@ -150,54 +154,138 @@ def _improve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _reset_kill_switch(args: argparse.Namespace) -> int:
+    s = config.load()
+    state = LiveState.load(s.live_state_path)
+    if not state.kill_switch_tripped:
+        print(f"kill switch already clear at {s.live_state_path}")
+        return 0
+    state.kill_switch_tripped = False
+    state.save(s.live_state_path)
+    print(f"kill switch cleared at {s.live_state_path}")
+    return 0
+
+
 def _paper(args: argparse.Namespace) -> int:
     from .execution.broker import AlpacaCryptoBroker
-    from .execution.portfolio import Portfolio
     from .guardrails import risk
+    from .strategy.registry import from_spec
 
     s = config.load()
     champion = load_spec(s.strategies_dir / "champion.json")
     broker = AlpacaCryptoBroker()
 
     def tick() -> None:
-        bars = data.fetch_live(champion.symbol, champion.timeframe)
-        from .strategy.registry import from_spec
+        state = LiveState.load(s.live_state_path)
+        if state.kill_switch_tripped:
+            log.warning("kill switch tripped; tick skipped")
+            return
 
+        bars = data.fetch_live(champion.symbol, champion.timeframe)
         sig = from_spec(champion).signals(bars)
         last_ts = bars.index[-1]
         last_close = float(bars["close"].iloc[-1])
-        eq = broker.equity()
-        positions = broker.positions()
-        portfolio = Portfolio(
-            cash_usd=eq - sum(positions.values()) * last_close,
-            peak_equity_usd=eq,
-            day_start_equity_usd=eq,
-            trades_today=0,
-        )
-        portfolio.roll_day_if_needed({champion.symbol: last_close})
 
-        if bool(sig.at[last_ts, "entry"]) and champion.symbol not in positions:
+        eq = broker.equity()
+        cash = broker.cash()
+        positions = broker.positions()
+        held_qty = positions.get(champion.symbol, 0.0)
+        today = datetime.now(timezone.utc).date().isoformat()
+        state.observe(eq, today)
+
+        # Hard drawdown trip is sticky once set.
+        if state.peak_equity_usd > 0:
+            dd = eq / state.peak_equity_usd - 1.0
+            if dd <= config.HARD_DD_KILL_PCT:
+                state.kill_switch_tripped = True
+                state.save(s.live_state_path)
+                with db.session(s.db_path) as conn:
+                    evlogger.log_guardrail(
+                        conn,
+                        "hard_dd_kill",
+                        {"dd": dd, "equity": eq, "peak": state.peak_equity_usd},
+                    )
+                log.warning("hard DD kill tripped at %.2f%%", dd * 100)
+                return
+
+        exposure = held_qty * last_close
+        with db.session(s.db_path) as conn:
+            evlogger.log_equity(
+                conn, last_ts.isoformat(), eq, cash, exposure, state.peak_equity_usd
+            )
+
+        regime_label = str(regime_mod.classify(bars).iloc[-1])
+
+        if bool(sig.at[last_ts, "entry"]) and held_qty == 0:
             notional = eq * champion.risk.position_pct
             qty = round(notional / last_close, 6)
             order = risk.Order(champion.symbol, "buy", qty, notional)
-            state = risk.PortfolioState(
+            rstate = risk.PortfolioState(
                 equity_usd=eq,
-                peak_equity_usd=portfolio.peak_equity_usd,
-                day_start_equity_usd=portfolio.day_start_equity_usd,
-                trades_today=portfolio.trades_today,
-                open_short_qty=0.0,
-                kill_switch_tripped=portfolio.kill_switch,
+                peak_equity_usd=state.peak_equity_usd,
+                day_start_equity_usd=state.day_start_equity_usd,
+                trades_today=state.trades_today,
+                current_qty=held_qty,
+                kill_switch_tripped=state.kill_switch_tripped,
             )
-            decision = risk.allow(order, state)
+            decision = risk.allow(order, rstate)
             if not decision.allowed:
+                with db.session(s.db_path) as conn:
+                    evlogger.log_guardrail(
+                        conn, decision.reason, {"order": order.__dict__, "equity": eq}
+                    )
                 log.warning("guardrail blocked entry: %s", decision.reason)
+                state.save(s.live_state_path)
                 return
             fill = broker.submit_market(champion.symbol, "buy", qty)
+            state.trades_today += 1
+            with db.session(s.db_path) as conn:
+                evlogger.log_trade(
+                    conn,
+                    version=champion.version,
+                    symbol=champion.symbol,
+                    side="long",
+                    qty=fill.qty,
+                    entry_ts=last_ts.isoformat(),
+                    entry_px=fill.avg_price,
+                    reason_entry=str(sig.at[last_ts, "reason"]),
+                    regime=regime_label,
+                    meta={"order_id": fill.order_id},
+                )
             log.info("filled %s qty=%s px=%s", fill.symbol, fill.qty, fill.avg_price)
-        elif bool(sig.at[last_ts, "exit"]) and champion.symbol in positions:
-            qty = positions[champion.symbol]
-            fill = broker.submit_market(champion.symbol, "sell", qty)
+
+        elif bool(sig.at[last_ts, "exit"]) and held_qty > 0:
+            order = risk.Order(champion.symbol, "sell", held_qty, held_qty * last_close)
+            rstate = risk.PortfolioState(
+                equity_usd=eq,
+                peak_equity_usd=state.peak_equity_usd,
+                day_start_equity_usd=state.day_start_equity_usd,
+                trades_today=state.trades_today,
+                current_qty=held_qty,
+                kill_switch_tripped=state.kill_switch_tripped,
+            )
+            decision = risk.allow(order, rstate)
+            if not decision.allowed:
+                with db.session(s.db_path) as conn:
+                    evlogger.log_guardrail(
+                        conn, decision.reason, {"order": order.__dict__, "equity": eq}
+                    )
+                log.warning("guardrail blocked exit: %s", decision.reason)
+                state.save(s.live_state_path)
+                return
+            fill = broker.submit_market(champion.symbol, "sell", held_qty)
+            with db.session(s.db_path) as conn:
+                evlogger.close_open_trade(
+                    conn,
+                    symbol=champion.symbol,
+                    version=champion.version,
+                    exit_ts=last_ts.isoformat(),
+                    exit_px=fill.avg_price,
+                    reason_exit="signal_exit",
+                )
             log.info("exited %s qty=%s px=%s", fill.symbol, fill.qty, fill.avg_price)
+
+        state.save(s.live_state_path)
 
     if args.once:
         tick()
@@ -206,7 +294,11 @@ def _paper(args: argparse.Namespace) -> int:
     from . import scheduler
 
     def improve_job() -> None:
-        _improve(argparse.Namespace(dry_run=False, fixture_proposal=None, oos_dir=None))
+        _improve(
+            argparse.Namespace(
+                dry_run=False, fixture_proposal=None, oos_dir=None, expect="reject"
+            )
+        )
 
     scheduler.run_forever(tick, improve_job)
     return 0
@@ -232,11 +324,19 @@ def main(argv: list[str] | None = None) -> int:
         help="path to a JSON challenger spec; skip Claude API and use this instead",
     )
     imp.add_argument("--oos-dir", help="override OOS bars dir (used by worked example)")
+    imp.add_argument(
+        "--expect",
+        choices=["accept", "reject"],
+        default="reject",
+        help="dry-run exit code: 0 if decision matches, 2 if it doesn't",
+    )
     imp.set_defaults(func=_improve)
 
     pap = sub.add_parser("paper")
     pap.add_argument("--once", action="store_true")
     pap.set_defaults(func=_paper)
+
+    sub.add_parser("reset-kill-switch").set_defaults(func=_reset_kill_switch)
 
     args = parser.parse_args(argv)
     s = config.load()

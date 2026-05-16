@@ -31,5 +31,5 @@ jobs:
         run: |
           python examples/worked_example_artifacts/generate_fixtures.py
           python -m trading_agent init-db
-          python -m trading_agent improve --dry-run \
+          python -m trading_agent improve --dry-run --expect=reject \
               --fixture-proposal examples/worked_example_artifacts/proposal.json

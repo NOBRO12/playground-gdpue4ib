@@ -20,7 +20,7 @@ class PortfolioState:
     peak_equity_usd: float
     day_start_equity_usd: float
     trades_today: int
-    open_short_qty: float  # positive number if any short is open
+    current_qty: float  # qty currently held in order.symbol (>=0 for long-only)
     kill_switch_tripped: bool
 
 
@@ -40,6 +40,11 @@ def allow(order: Order, state: PortfolioState) -> Decision:
         if dd <= config.HARD_DD_KILL_PCT:
             return Decision(False, "hard_dd_kill")
 
+    # No-shorts: a sell larger than what we hold would open a short.
+    # Enforced before per-side gates so it applies regardless of buy/sell.
+    if config.NO_SHORTS and order.side == "sell" and order.qty > state.current_qty:
+        return Decision(False, "would_open_short")
+
     # Daily loss cap (only blocks new entries, not exits).
     if order.side == "buy" and state.day_start_equity_usd > 0:
         day_pnl_pct = state.equity_usd / state.day_start_equity_usd - 1.0
@@ -53,11 +58,5 @@ def allow(order: Order, state: PortfolioState) -> Decision:
         pct = order.notional_usd / state.equity_usd
         if pct > config.MAX_POSITION_PCT:
             return Decision(False, "max_position_pct")
-
-    if config.NO_SHORTS and order.side == "sell" and state.open_short_qty == 0 and order.qty > 0:
-        # We're flat — a "sell" with no inventory would open a short.
-        # Exits net out at a higher level; reject naked shorts here.
-        # (In practice the caller passes qty=position_qty for exits.)
-        pass  # Exits are validated via state at the caller; keep this branch explicit.
 
     return Decision(True, "")

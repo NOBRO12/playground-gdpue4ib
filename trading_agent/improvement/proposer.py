@@ -61,7 +61,7 @@ def propose(champion: StrategySpec, trade_summary: dict[str, Any]) -> ProposalRe
     }
     body = _prompt_body(champion, trade_summary)
     msg = client.messages.create(
-        model="claude-opus-4-7",
+        model=s.proposer_model,
         max_tokens=2048,
         system=SYSTEM,
         tools=[tool],
@@ -71,8 +71,7 @@ def propose(champion: StrategySpec, trade_summary: dict[str, Any]) -> ProposalRe
     tool_block = next((b for b in msg.content if getattr(b, "type", None) == "tool_use"), None)
     if tool_block is None:
         raise RuntimeError("Claude did not return a tool_use block")
-    raw = tool_block.input
-    # Stamp version and parent before validation so the LLM can't pick them.
+    raw = dict(tool_block.input)
     raw["parent"] = champion.version
     raw["version"] = "v-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     spec = StrategySpec.model_validate(raw)

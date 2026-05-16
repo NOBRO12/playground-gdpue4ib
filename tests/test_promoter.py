@@ -21,6 +21,13 @@ def test_promotes_on_clear_improvement():
     assert accepted and reason == "promoted"
 
 
+def test_rejects_below_absolute_sharpe_floor():
+    # Negative champion -> +0.10 delta clears the relative gate but absolute
+    # gate must still floor at 0.20.
+    accepted, reason = _gate(_sc(-0.1, -0.05), _sc(0.15, -0.05))
+    assert not accepted and reason == "absolute_sharpe_floor"
+
+
 def test_rejects_on_sharpe_regression():
     accepted, reason = _gate(_sc(0.8, -0.05), _sc(0.6, -0.05))
     assert not accepted and reason == "oos_sharpe_regression"
