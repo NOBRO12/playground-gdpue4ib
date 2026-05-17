@@ -39,13 +39,24 @@ python -m trading_agent improve --dry-run \
 
 See `examples/worked_example.md` for a full trace.
 
+## Operator runbook
+
+End-to-end deployment + monitoring guide: [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+Short version: green tests are not the same as functional — you also need
+Alpaca paper credentials, an Anthropic key, real BTC/USD bars in `data/is/`
+and `data/oos/`, and a 24/7 host with persistent disk for `agent.db` and
+`live_state.json`.
+
 ## CLI
 
 ```
 python -m trading_agent init-db
+python -m trading_agent fetch-bars --symbol BTC/USD --timeframe 1h \
+    --start 2024-01-01 --end 2024-09-30 --to is
 python -m trading_agent backtest --spec <spec.json> --bars <bars.csv> [--window START:END] [--oos]
 python -m trading_agent improve [--dry-run] [--fixture-proposal <path>] [--oos-dir <dir>] [--expect accept|reject]
 python -m trading_agent paper [--once]
+python -m trading_agent status
 python -m trading_agent reset-kill-switch
 ```
 

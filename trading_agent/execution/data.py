@@ -1,8 +1,8 @@
 """Bar data fetcher.
 
 Reads cached parquet/CSV from disk for backtests; pulls fresh bars from Alpaca
-for the live loop. The proposer only ever sees IS bars; the OOS directory is
-read by the promoter alone.
+for the live loop and for populating IS/OOS windows. The proposer only ever
+sees IS bars; the OOS directory is read by the promoter alone.
 """
 from __future__ import annotations
 
@@ -39,8 +39,35 @@ def load_window(directory: str | Path, symbol: str, timeframe: str) -> pd.DataFr
     return _normalize(pd.concat(parts, ignore_index=True))
 
 
-def fetch_live(symbol: str, timeframe: str, lookback_hours: int = 200) -> pd.DataFrame:
-    """Pull recent crypto bars from Alpaca. Keys must be in env."""
+def csv_path(directory: str | Path, symbol: str, timeframe: str, start: str, end: str) -> Path:
+    """Filename convention that ``load_window`` will find."""
+    safe_symbol = symbol.replace("/", "-")
+    return Path(directory) / f"{safe_symbol}_{timeframe}_{start}_{end}.csv"
+
+
+def write_csv(bars: pd.DataFrame, path: str | Path, overwrite: bool = False) -> Path:
+    """Persist bars to CSV with the canonical 'timestamp' index column.
+
+    Refuses to overwrite by default — the OOS window in particular must not be
+    silently clobbered.
+    """
+    path = Path(path)
+    if path.exists() and not overwrite:
+        raise FileExistsError(f"refusing to overwrite {path}; pass overwrite=True to force")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out = bars.copy()
+    out.index.name = "timestamp"
+    out.reset_index().to_csv(path, index=False)
+    return path
+
+
+def fetch_history(
+    symbol: str,
+    timeframe: str,
+    start: datetime,
+    end: datetime,
+) -> pd.DataFrame:
+    """Pull historical crypto bars from Alpaca between start and end (UTC)."""
     from alpaca.data.historical import CryptoHistoricalDataClient
     from alpaca.data.requests import CryptoBarsRequest
     from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
@@ -51,8 +78,6 @@ def fetch_live(symbol: str, timeframe: str, lookback_hours: int = 200) -> pd.Dat
         "1d": TimeFrame(1, TimeFrameUnit.Day),
     }
     client = CryptoHistoricalDataClient()  # crypto market data is unauthenticated
-    end = datetime.now(timezone.utc)
-    start = end - pd.Timedelta(hours=lookback_hours)
     req = CryptoBarsRequest(
         symbol_or_symbols=[symbol], timeframe=tf_map[timeframe], start=start, end=end
     )
@@ -60,3 +85,10 @@ def fetch_live(symbol: str, timeframe: str, lookback_hours: int = 200) -> pd.Dat
     if isinstance(bars.index, pd.MultiIndex):
         bars = bars.xs(symbol, level=0)
     return _normalize(bars.reset_index())
+
+
+def fetch_live(symbol: str, timeframe: str, lookback_hours: int = 200) -> pd.DataFrame:
+    """Recent bars ending now — thin wrapper around fetch_history."""
+    end = datetime.now(timezone.utc)
+    start = end - pd.Timedelta(hours=lookback_hours)
+    return fetch_history(symbol, timeframe, start, end)

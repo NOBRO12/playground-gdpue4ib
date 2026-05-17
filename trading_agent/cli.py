@@ -2,9 +2,11 @@
 
 Subcommands:
     init-db            Create tables and seed champion version row.
+    fetch-bars         Pull historical crypto bars from Alpaca and write CSV.
     backtest           Run a deterministic backtest of a spec against bars on disk.
     improve            Run the full proposer -> backtest -> promoter loop.
     paper              Live paper loop (requires Alpaca + Anthropic keys).
+    status             Print champion + recent trades + recent decisions + live state.
     reset-kill-switch  Clear the kill_switch_tripped flag in live state.
 """
 from __future__ import annotations
@@ -35,6 +37,21 @@ def _init_db(args: argparse.Namespace) -> int:
     with db.session(s.db_path) as conn:
         versioning.record_version(conn, spec, status="champion", notes="seed")
     print(f"initialized {s.db_path}; champion={spec.version}")
+    return 0
+
+
+def _fetch_bars(args: argparse.Namespace) -> int:
+    s = config.load()
+    target_dir = s.is_dir if args.to == "is" else s.oos_dir
+    start = datetime.fromisoformat(args.start).replace(tzinfo=timezone.utc)
+    end = datetime.fromisoformat(args.end).replace(tzinfo=timezone.utc)
+    path = data.csv_path(target_dir, args.symbol, args.timeframe, args.start, args.end)
+    if path.exists() and not args.force:
+        print(f"refusing to overwrite {path}; pass --force to clobber", file=sys.stderr)
+        return 2
+    bars = data.fetch_history(args.symbol, args.timeframe, start, end)
+    data.write_csv(bars, path, overwrite=args.force)
+    print(f"wrote {len(bars)} bars to {path}")
     return 0
 
 
@@ -151,6 +168,59 @@ def _improve(args: argparse.Namespace) -> int:
             versioning.promote(conn, challenger, s.strategies_dir)
         else:
             versioning.reject(conn, challenger, s.strategies_dir, decision.reason)
+    return 0
+
+
+def _status(args: argparse.Namespace) -> int:
+    s = config.load()
+    champion = load_spec(s.strategies_dir / "champion.json")
+    state = LiveState.load(s.live_state_path)
+    snapshot = {
+        "champion": {
+            "version": champion.version,
+            "type": champion.type,
+            "symbol": champion.symbol,
+            "timeframe": champion.timeframe,
+            "params": champion.params,
+            "filters": champion.filters.model_dump(),
+            "risk": champion.risk.model_dump(),
+        },
+        "live_state": {
+            "peak_equity_usd": state.peak_equity_usd,
+            "day_start_equity_usd": state.day_start_equity_usd,
+            "day_start_date": state.day_start_date,
+            "trades_today": state.trades_today,
+            "kill_switch_tripped": state.kill_switch_tripped,
+        },
+        "recent_trades": [],
+        "recent_backtests": [],
+        "recent_proposals": [],
+        "recent_guardrail_events": [],
+    }
+    if s.db_path.exists():
+        with db.session(s.db_path) as conn:
+            for row in conn.execute(
+                "SELECT id, version, symbol, side, qty, entry_ts, entry_px, exit_ts, exit_px, "
+                "pnl_usd, reason_entry, reason_exit, regime "
+                "FROM trades ORDER BY id DESC LIMIT 5"
+            ):
+                snapshot["recent_trades"].append(dict(row))
+            for row in conn.execute(
+                "SELECT id, version, window_start, window_end, oos_flag, sharpe, max_dd, n_trades, equity_final "
+                "FROM backtests ORDER BY id DESC LIMIT 5"
+            ):
+                snapshot["recent_backtests"].append(dict(row))
+            for row in conn.execute(
+                "SELECT id, ts, parent_version, decision, reject_reason "
+                "FROM proposals ORDER BY id DESC LIMIT 5"
+            ):
+                snapshot["recent_proposals"].append(dict(row))
+            for row in conn.execute(
+                "SELECT id, ts, kind, detail_json "
+                "FROM guardrail_events ORDER BY id DESC LIMIT 5"
+            ):
+                snapshot["recent_guardrail_events"].append(dict(row))
+    print(json.dumps(snapshot, indent=2, default=str))
     return 0
 
 
@@ -310,6 +380,15 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("init-db").set_defaults(func=_init_db)
 
+    fb = sub.add_parser("fetch-bars")
+    fb.add_argument("--symbol", default="BTC/USD")
+    fb.add_argument("--timeframe", default="1h", choices=["1h", "4h", "1d"])
+    fb.add_argument("--start", required=True, help="ISO date, e.g. 2024-01-01")
+    fb.add_argument("--end", required=True, help="ISO date, e.g. 2024-09-30")
+    fb.add_argument("--to", required=True, choices=["is", "oos"])
+    fb.add_argument("--force", action="store_true", help="overwrite existing file")
+    fb.set_defaults(func=_fetch_bars)
+
     bt = sub.add_parser("backtest")
     bt.add_argument("--spec", required=True)
     bt.add_argument("--bars", required=True, help="CSV of OHLCV bars")
@@ -336,6 +415,7 @@ def main(argv: list[str] | None = None) -> int:
     pap.add_argument("--once", action="store_true")
     pap.set_defaults(func=_paper)
 
+    sub.add_parser("status").set_defaults(func=_status)
     sub.add_parser("reset-kill-switch").set_defaults(func=_reset_kill_switch)
 
     args = parser.parse_args(argv)
