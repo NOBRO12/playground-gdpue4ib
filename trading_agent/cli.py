@@ -236,14 +236,26 @@ def _reset_kill_switch(args: argparse.Namespace) -> int:
     return 0
 
 
+def _make_broker(s: config.Settings):
+    if s.broker == "mock":
+        from .execution.mock_broker import MockBroker
+
+        log.info("using MockBroker (state at %s)", s.mock_broker_path)
+        return MockBroker(state_path=s.mock_broker_path)
+    if s.broker == "alpaca":
+        from .execution.broker import AlpacaCryptoBroker
+
+        return AlpacaCryptoBroker()
+    raise ValueError(f"unknown AGENT_BROKER={s.broker!r}; expected 'alpaca' or 'mock'")
+
+
 def _paper(args: argparse.Namespace) -> int:
-    from .execution.broker import AlpacaCryptoBroker
     from .guardrails import risk
     from .strategy.registry import from_spec
 
     s = config.load()
     champion = load_spec(s.strategies_dir / "champion.json")
-    broker = AlpacaCryptoBroker()
+    broker = _make_broker(s)
 
     def tick() -> None:
         state = LiveState.load(s.live_state_path)
@@ -255,6 +267,7 @@ def _paper(args: argparse.Namespace) -> int:
         sig = from_spec(champion).signals(bars)
         last_ts = bars.index[-1]
         last_close = float(bars["close"].iloc[-1])
+        broker.mark(champion.symbol, last_close)
 
         eq = broker.equity()
         cash = broker.cash()

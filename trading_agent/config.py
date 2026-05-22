@@ -18,6 +18,8 @@ class Settings:
     is_dir: Path
     oos_dir: Path
     live_state_path: Path
+    broker: str  # "alpaca" | "mock"
+    mock_broker_path: Path
     alpaca_key: str | None
     alpaca_secret: str | None
     anthropic_key: str | None
@@ -34,6 +36,10 @@ def load() -> Settings:
         oos_dir=Path(os.environ.get("AGENT_OOS_DIR", root / "data" / "oos")),
         live_state_path=Path(
             os.environ.get("AGENT_LIVE_STATE_PATH", root / "data" / "live_state.json")
+        ),
+        broker=os.environ.get("AGENT_BROKER", "alpaca").lower(),
+        mock_broker_path=Path(
+            os.environ.get("AGENT_MOCK_BROKER_PATH", root / "data" / "mock_broker.json")
         ),
         alpaca_key=os.environ.get("ALPACA_KEY"),
         alpaca_secret=os.environ.get("ALPACA_SECRET"),

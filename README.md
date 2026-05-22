@@ -47,6 +47,10 @@ Alpaca paper credentials, an Anthropic key, real BTC/USD bars in `data/is/`
 and `data/oos/`, and a 24/7 host with persistent disk for `agent.db` and
 `live_state.json`.
 
+**Don't have an Alpaca account yet?** Set `AGENT_BROKER=mock` to use the
+in-process simulator. `fetch-bars`, `backtest`, `improve`, and `paper --once`
+all work offline — only real fills require Alpaca. See `docs/RUNBOOK.md` §0.
+
 ## CLI
 
 ```

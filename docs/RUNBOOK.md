@@ -4,6 +4,59 @@ Practical steps to take this repo from "green tests" to "running continuously
 against Alpaca paper crypto." ~80% of the work below is not code — it is
 credentials, hosting, real bars, and monitoring.
 
+## 0. Offline development (no Alpaca account)
+
+Everything except real fills works without an Alpaca account. The crypto
+historical endpoint is unauthenticated, and a `MockBroker` stands in for
+the trading endpoint so you can exercise the full live tick path —
+including DB writes, equity drift, and the kill-switch trip — entirely
+offline.
+
+```bash
+# Use the simulator instead of Alpaca.
+export AGENT_BROKER=mock
+export ANTHROPIC_API_KEY=sk-ant-...     # only needed for real proposer runs
+
+python -m trading_agent init-db
+
+# Fetch real BTC/USD history (Alpaca crypto data is unauthenticated).
+python -m trading_agent fetch-bars --symbol BTC/USD --timeframe 1h \
+    --start 2023-01-01 --end 2024-09-30 --to is
+python -m trading_agent fetch-bars --symbol BTC/USD --timeframe 1h \
+    --start 2024-10-01 --end 2025-01-01 --to oos
+
+# Backtest against real bars.
+python -m trading_agent backtest --spec strategies/champion.json \
+    --bars data/is/BTC-USD_1h_2023-01-01_2024-09-30.csv
+
+# Run a REAL Claude proposal -> backtest -> promoter decision.
+python -m trading_agent improve --dry-run
+
+# Simulate one live tick against the mock broker.
+python -m trading_agent paper --once
+python -m trading_agent status
+
+# Deliberately trip the kill switch to verify your monitoring path.
+python -c "
+import json
+from pathlib import Path
+p = Path('data/live_state.json')
+s = json.loads(p.read_text())
+s['peak_equity_usd'] = s.get('peak_equity_usd', 100_000.0) * 1.20
+p.write_text(json.dumps(s, indent=2))
+"
+python -m trading_agent paper --once    # next tick will trip hard_dd_kill
+python -m trading_agent status          # guardrail_events should show it
+python -m trading_agent reset-kill-switch
+
+# Reset the simulator any time:
+rm -f data/mock_broker.json data/live_state.json
+```
+
+When Alpaca becomes available, set `AGENT_BROKER=alpaca` (or remove the
+override — it defaults to alpaca) and add `ALPACA_KEY` / `ALPACA_SECRET`.
+Nothing else changes.
+
 ## 1. One-time prerequisites
 
 | Item | Where | Notes |

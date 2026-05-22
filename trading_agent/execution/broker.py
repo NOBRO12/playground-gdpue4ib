@@ -55,3 +55,6 @@ class AlpacaCryptoBroker:
 
     def positions(self) -> dict[str, float]:
         return {p.symbol: float(p.qty) for p in self._client.get_all_positions()}
+
+    def mark(self, symbol: str, px: float) -> None:
+        """No-op: Alpaca prices its own positions. Present for interface parity with MockBroker."""
