@@ -2,6 +2,7 @@
 
 Subcommands:
     init-db            Create tables and seed champion version row.
+    check-keys         Verify Anthropic + Alpaca credentials and network reachability.
     fetch-bars         Pull historical crypto bars from Alpaca and write CSV.
     backtest           Run a deterministic backtest of a spec against bars on disk.
     improve            Run the full proposer -> backtest -> promoter loop.
@@ -38,6 +39,22 @@ def _init_db(args: argparse.Namespace) -> int:
         versioning.record_version(conn, spec, status="champion", notes="seed")
     print(f"initialized {s.db_path}; champion={spec.version}")
     return 0
+
+
+def _check_keys(args: argparse.Namespace) -> int:
+    from . import diagnostics
+
+    s = config.load()
+    results = diagnostics.run_all(s.anthropic_key, s.alpaca_key, s.alpaca_secret)
+
+    if args.json:
+        print(json.dumps(results, indent=2))
+    else:
+        width = max(len(r["name"]) for r in results)
+        for r in results:
+            print(f"{r['name']:<{width}}  {r['status']:<7}  {r['detail']}")
+
+    return diagnostics.overall_exit_code(results)
 
 
 def _fetch_bars(args: argparse.Namespace) -> int:
@@ -392,6 +409,10 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("init-db").set_defaults(func=_init_db)
+
+    ck = sub.add_parser("check-keys")
+    ck.add_argument("--json", action="store_true", help="machine-readable output")
+    ck.set_defaults(func=_check_keys)
 
     fb = sub.add_parser("fetch-bars")
     fb.add_argument("--symbol", default="BTC/USD")

@@ -55,6 +55,7 @@ all work offline — only real fills require Alpaca. See `docs/RUNBOOK.md` §0.
 
 ```
 python -m trading_agent init-db
+python -m trading_agent check-keys [--json]
 python -m trading_agent fetch-bars --symbol BTC/USD --timeframe 1h \
     --start 2024-01-01 --end 2024-09-30 --to is
 python -m trading_agent backtest --spec <spec.json> --bars <bars.csv> [--window START:END] [--oos]
@@ -63,6 +64,9 @@ python -m trading_agent paper [--once]
 python -m trading_agent status
 python -m trading_agent reset-kill-switch
 ```
+
+`.env` is auto-loaded — values you put there work without `export`. A real
+environment variable still takes precedence over the file.
 
 `improve --dry-run --expect=<accept|reject>` exits 0 when the decision matches,
 2 when it doesn't. CI uses this to assert the worked example's rejection path.

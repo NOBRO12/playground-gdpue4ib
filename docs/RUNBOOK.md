@@ -19,6 +19,9 @@ export ANTHROPIC_API_KEY=sk-ant-...     # only needed for real proposer runs
 
 python -m trading_agent init-db
 
+# Verify your Anthropic key works before doing anything else.
+python -m trading_agent check-keys
+
 # Fetch real BTC/USD history (Alpaca crypto data is unauthenticated).
 python -m trading_agent fetch-bars --symbol BTC/USD --timeframe 1h \
     --start 2023-01-01 --end 2024-09-30 --to is
@@ -79,6 +82,7 @@ cp .env.example .env
 # AGENT_PROPOSER_MODEL defaults to claude-sonnet-4-6.
 
 python -m trading_agent init-db
+python -m trading_agent check-keys   # verify Anthropic + Alpaca before fetching bars
 
 # Fetch REAL bars. Do not run the loop against the synthetic fixtures.
 python -m trading_agent fetch-bars --symbol BTC/USD --timeframe 1h \

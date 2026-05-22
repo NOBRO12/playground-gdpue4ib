@@ -28,6 +28,12 @@ class Settings:
 
 
 def load() -> Settings:
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(_root() / ".env", override=False)
+    except ImportError:
+        pass
     root = _root()
     return Settings(
         db_path=Path(os.environ.get("AGENT_DB_PATH", root / "data" / "agent.db")),
