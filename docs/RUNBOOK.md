@@ -172,11 +172,47 @@ Nice-to-have:
 
 ## 6. What this is still not
 
-The `paper=True` flag in `trading_agent/execution/broker.py` is hard-coded
-for a reason. Before considering live capital:
+Live trading is gated behind `AGENT_LIVE_MODE` (off by default) for a
+reason. Before considering live capital:
 
 1. Re-read the README's "What this design can't do" section.
 2. Run paper for at least 3 months of forward data.
 3. Compare paper P&L against a buy-and-hold benchmark over the same window.
 4. Going live is a separate, much larger project (compliance, taxes,
    slippage, exchange selection). Not in scope here.
+
+## 7. Switching to live trading
+
+**Prerequisites before you flip this switch:**
+
+1. Run paper for at least 3 months of *forward* data (not backtested).
+2. Compare paper P&L to a BTC buy-and-hold benchmark over the same window.
+3. Obtain a separate set of *live* Alpaca API keys. Paper keys are rejected
+   by the live endpoint. Verify the account has crypto trading enabled and
+   is identity-verified.
+4. Reduce `position_pct` in your champion spec to a level you can afford to
+   lose entirely.
+
+**To enable:**
+
+```bash
+# In .env (or export in your shell):
+AGENT_LIVE_MODE=true
+ALPACA_KEY=<your-live-key>        # NOT your paper key
+ALPACA_SECRET=<your-live-secret>
+
+python -m trading_agent check-keys    # confirm the live account is reachable
+python -m trading_agent paper --once   # dry-fire one tick; watch the 5-second warning
+```
+
+`paper --once` (and the full scheduler) prints a 5-second abort banner
+whenever live mode is active. `AlpacaCryptoBroker` also logs a `WARNING`
+on every construction so it lands in your log sink.
+
+**The guardrails are unchanged.** `HARD_DD_KILL` (-10%), `MAX_DAILY_LOSS`
+(-3%), `MAX_TRADES_PER_DAY` (8), and `MAX_POSITION_PCT` (25%) all apply
+exactly as in paper mode — they are enforced before every order regardless
+of endpoint.
+
+**To revert at any time:** set `AGENT_LIVE_MODE=false` (or remove it). The
+agent switches back to paper on the next restart.

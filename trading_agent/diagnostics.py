@@ -33,18 +33,21 @@ def check_anthropic(api_key: str | None, model: str = "claude-haiku-4-5-20251001
         return _result("anthropic", "FAIL", f"{type(exc).__name__}: {exc}")
 
 
-def check_alpaca_trading(key: str | None, secret: str | None) -> dict[str, str]:
+def check_alpaca_trading(
+    key: str | None, secret: str | None, paper: bool = True
+) -> dict[str, str]:
     if not key or not secret:
         return _result("alpaca-trading", "SKIPPED", "ALPACA_KEY/ALPACA_SECRET not set")
     try:
         from alpaca.trading.client import TradingClient
 
-        client = TradingClient(key, secret, paper=True)
+        client = TradingClient(key, secret, paper=paper)
         acct = client.get_account()
+        mode = "paper" if paper else "LIVE"
         return _result(
             "alpaca-trading",
             "OK",
-            f"paper account cash=${float(acct.cash):,.2f} equity=${float(acct.equity):,.2f}",
+            f"{mode} account cash=${float(acct.cash):,.2f} equity=${float(acct.equity):,.2f}",
         )
     except Exception as exc:  # noqa: BLE001
         return _result("alpaca-trading", "FAIL", f"{type(exc).__name__}: {exc}")
@@ -67,11 +70,12 @@ def run_all(
     alpaca_key: str | None,
     alpaca_secret: str | None,
     anthropic_model: str | None = None,
+    alpaca_paper: bool = True,
 ) -> list[dict[str, str]]:
     anthropic_kwargs = {"model": anthropic_model} if anthropic_model else {}
     return [
         check_anthropic(anthropic_key, **anthropic_kwargs),
-        check_alpaca_trading(alpaca_key, alpaca_secret),
+        check_alpaca_trading(alpaca_key, alpaca_secret, paper=alpaca_paper),
         check_alpaca_data(),
     ]
 

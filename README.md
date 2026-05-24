@@ -110,6 +110,10 @@ Hard-coded, **not** LLM-tunable, all enforced via a single
 
 Blocks write a row to `guardrail_events` with full context.
 
+Set `AGENT_LIVE_MODE=true` to execute against Alpaca's live endpoint (real
+funds, separate live keys required). Every limit above applies unchanged.
+Default is `false` (paper). See `docs/RUNBOOK.md` §7 before flipping it.
+
 ## Promotion gate (`trading_agent.improvement.promoter`)
 
 Both specs are scored on the same OOS bars. Challenger is promoted only if

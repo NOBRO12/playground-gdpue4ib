@@ -20,6 +20,7 @@ class Settings:
     live_state_path: Path
     broker: str  # "alpaca" | "mock"
     mock_broker_path: Path
+    live_mode: bool  # False = paper endpoint; True = real-money live endpoint
     alpaca_key: str | None
     alpaca_secret: str | None
     anthropic_key: str | None
@@ -47,6 +48,7 @@ def load() -> Settings:
         mock_broker_path=Path(
             os.environ.get("AGENT_MOCK_BROKER_PATH", root / "data" / "mock_broker.json")
         ),
+        live_mode=os.environ.get("AGENT_LIVE_MODE", "false").lower() in ("1", "true", "yes"),
         alpaca_key=os.environ.get("ALPACA_KEY"),
         alpaca_secret=os.environ.get("ALPACA_SECRET"),
         anthropic_key=os.environ.get("ANTHROPIC_API_KEY"),

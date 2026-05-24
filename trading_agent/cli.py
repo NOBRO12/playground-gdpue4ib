@@ -47,7 +47,11 @@ def _check_keys(args: argparse.Namespace) -> int:
     s = config.load()
     model = s.proposer_model if args.model == "proposer" else args.model
     results = diagnostics.run_all(
-        s.anthropic_key, s.alpaca_key, s.alpaca_secret, anthropic_model=model
+        s.anthropic_key,
+        s.alpaca_key,
+        s.alpaca_secret,
+        anthropic_model=model,
+        alpaca_paper=not s.live_mode,
     )
 
     if args.json:
@@ -274,6 +278,16 @@ def _paper(args: argparse.Namespace) -> int:
     from .strategy.registry import from_spec
 
     s = config.load()
+    if s.live_mode and s.broker == "alpaca":
+        import time
+
+        print(
+            "\n*** LIVE TRADING MODE ACTIVE ***\n"
+            "Orders will execute against the real Alpaca endpoint using real money.\n"
+            "All guardrails are enforced. Press Ctrl-C within 5 seconds to abort.\n",
+            flush=True,
+        )
+        time.sleep(5)
     champion = load_spec(s.strategies_dir / "champion.json")
     broker = _make_broker(s)
 

@@ -1,9 +1,17 @@
-"""Thin wrapper over Alpaca's paper crypto trading API."""
+"""Thin wrapper over Alpaca's crypto trading API.
+
+Paper mode by default. Set ``AGENT_LIVE_MODE=true`` to route orders to the
+real-money live endpoint. All guardrails in ``trading_agent.guardrails.risk``
+apply identically in both modes.
+"""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from .. import config
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -16,7 +24,7 @@ class Fill:
 
 
 class AlpacaCryptoBroker:
-    """Paper trading only. `paper=True` is hard-coded."""
+    """Alpaca crypto broker. Paper by default; `AGENT_LIVE_MODE=true` selects live."""
 
     def __init__(self) -> None:
         from alpaca.trading.client import TradingClient
@@ -26,7 +34,12 @@ class AlpacaCryptoBroker:
             raise RuntimeError(
                 "ALPACA_KEY/ALPACA_SECRET not set; broker requires keys at runtime"
             )
-        self._client = TradingClient(s.alpaca_key, s.alpaca_secret, paper=True)
+        if s.live_mode:
+            log.warning(
+                "LIVE MODE ACTIVE — orders execute against the real Alpaca endpoint "
+                "using real funds. Set AGENT_LIVE_MODE=false to revert to paper."
+            )
+        self._client = TradingClient(s.alpaca_key, s.alpaca_secret, paper=not s.live_mode)
 
     def submit_market(self, symbol: str, side: str, qty: float) -> Fill:
         from alpaca.trading.enums import OrderSide, TimeInForce
