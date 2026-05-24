@@ -45,7 +45,10 @@ def _check_keys(args: argparse.Namespace) -> int:
     from . import diagnostics
 
     s = config.load()
-    results = diagnostics.run_all(s.anthropic_key, s.alpaca_key, s.alpaca_secret)
+    model = s.proposer_model if args.model == "proposer" else args.model
+    results = diagnostics.run_all(
+        s.anthropic_key, s.alpaca_key, s.alpaca_secret, anthropic_model=model
+    )
 
     if args.json:
         print(json.dumps(results, indent=2))
@@ -412,6 +415,13 @@ def main(argv: list[str] | None = None) -> int:
 
     ck = sub.add_parser("check-keys")
     ck.add_argument("--json", action="store_true", help="machine-readable output")
+    ck.add_argument(
+        "--model",
+        default=None,
+        help="Anthropic model to verify (default: a cheap Haiku call). "
+        "Pass 'proposer' to verify your configured AGENT_PROPOSER_MODEL, "
+        "or an explicit id like claude-sonnet-4-6.",
+    )
     ck.set_defaults(func=_check_keys)
 
     fb = sub.add_parser("fetch-bars")

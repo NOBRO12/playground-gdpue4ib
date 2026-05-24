@@ -147,6 +147,15 @@ def test_alpaca_data_ok(monkeypatch):
     assert "BTC/USD" in r["detail"]
 
 
+def test_run_all_forwards_anthropic_model(fake_anthropic):
+    results = diagnostics.run_all(
+        "sk-ant-api03-real", None, None, anthropic_model="claude-sonnet-4-6"
+    )
+    anthropic_result = next(r for r in results if r["name"] == "anthropic")
+    assert anthropic_result["status"] == "OK"
+    assert "claude-sonnet-4-6" in anthropic_result["detail"]
+
+
 def test_overall_exit_code():
     assert diagnostics.overall_exit_code(
         [{"status": "OK"}, {"status": "SKIPPED"}, {"status": "OK"}]

@@ -55,7 +55,7 @@ all work offline — only real fills require Alpaca. See `docs/RUNBOOK.md` §0.
 
 ```
 python -m trading_agent init-db
-python -m trading_agent check-keys [--json]
+python -m trading_agent check-keys [--json] [--model proposer|<model-id>]
 python -m trading_agent fetch-bars --symbol BTC/USD --timeframe 1h \
     --start 2024-01-01 --end 2024-09-30 --to is
 python -m trading_agent backtest --spec <spec.json> --bars <bars.csv> [--window START:END] [--oos]

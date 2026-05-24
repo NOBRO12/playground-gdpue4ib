@@ -66,9 +66,11 @@ def run_all(
     anthropic_key: str | None,
     alpaca_key: str | None,
     alpaca_secret: str | None,
+    anthropic_model: str | None = None,
 ) -> list[dict[str, str]]:
+    anthropic_kwargs = {"model": anthropic_model} if anthropic_model else {}
     return [
-        check_anthropic(anthropic_key),
+        check_anthropic(anthropic_key, **anthropic_kwargs),
         check_alpaca_trading(alpaca_key, alpaca_secret),
         check_alpaca_data(),
     ]
