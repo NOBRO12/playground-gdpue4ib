@@ -18,6 +18,7 @@ class LiveState:
     day_start_date: str = ""
     trades_today: int = 0
     kill_switch_tripped: bool = False
+    last_tick_utc: str = ""  # heartbeat: ISO timestamp of the most recent tick
     # Open-position exit levels (0.0 = flat / not set). Persisted so resting
     # stop/take orders can be reconciled and the live loop's exit decision
     # matches the backtester.

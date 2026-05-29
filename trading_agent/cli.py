@@ -243,12 +243,22 @@ def _status(args: argparse.Namespace) -> int:
             "day_start_date": state.day_start_date,
             "trades_today": state.trades_today,
             "kill_switch_tripped": state.kill_switch_tripped,
+            "last_tick_utc": state.last_tick_utc,
         },
+        "performance": {},
         "recent_trades": [],
         "recent_backtests": [],
         "recent_proposals": [],
         "recent_guardrail_events": [],
     }
+    # Heartbeat: how long since the scheduler last ticked.
+    if state.last_tick_utc:
+        try:
+            last = datetime.fromisoformat(state.last_tick_utc)
+            age_min = (datetime.now(timezone.utc) - last).total_seconds() / 60.0
+            snapshot["live_state"]["minutes_since_last_tick"] = round(age_min, 1)
+        except ValueError:
+            pass
     if s.db_path.exists():
         with db.session(s.db_path) as conn:
             for row in conn.execute(
@@ -272,6 +282,29 @@ def _status(args: argparse.Namespace) -> int:
                 "FROM guardrail_events ORDER BY id DESC LIMIT 5"
             ):
                 snapshot["recent_guardrail_events"].append(dict(row))
+
+            perf: dict = {}
+            first = conn.execute(
+                "SELECT equity_usd FROM equity_curve ORDER BY ts ASC LIMIT 1"
+            ).fetchone()
+            last = conn.execute(
+                "SELECT equity_usd, exposure_usd FROM equity_curve ORDER BY ts DESC LIMIT 1"
+            ).fetchone()
+            if first and last and first["equity_usd"]:
+                perf["since_inception_return"] = round(
+                    last["equity_usd"] / first["equity_usd"] - 1.0, 4
+                )
+                perf["current_equity_usd"] = last["equity_usd"]
+                perf["current_exposure_usd"] = last["exposure_usd"]
+            wr = conn.execute(
+                "SELECT COUNT(*) AS n, "
+                "SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END) AS w "
+                "FROM trades WHERE exit_ts IS NOT NULL"
+            ).fetchone()
+            if wr and wr["n"]:
+                perf["closed_trades"] = wr["n"]
+                perf["win_rate_to_date"] = round((wr["w"] or 0) / wr["n"], 3)
+            snapshot["performance"] = perf
     print(json.dumps(snapshot, indent=2, default=str))
     return 0
 
@@ -359,6 +392,10 @@ def _paper(args: argparse.Namespace) -> int:
 
     def tick() -> None:
         state = LiveState.load(s.live_state_path)
+        # Heartbeat first, so even skipped ticks (closed market, stale data,
+        # kill switch) prove the scheduler is alive.
+        state.last_tick_utc = datetime.now(timezone.utc).isoformat()
+        state.save(s.live_state_path)
         if state.kill_switch_tripped:
             log.warning("kill switch tripped; tick skipped")
             return
