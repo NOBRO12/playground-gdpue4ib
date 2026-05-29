@@ -83,7 +83,9 @@ class MockBroker:
     def cancel_open_orders(self, symbol: str) -> None:
         """No resting orders offline — no-op for interface parity."""
 
-    def submit_market(self, symbol: str, side: str, qty: float) -> Fill:
+    def submit_market(
+        self, symbol: str, side: str, qty: float, client_order_id: str | None = None
+    ) -> Fill:
         if symbol not in self._marks:
             raise RuntimeError(
                 f"mock broker has no mark for {symbol}; call mark() before submit_market()"

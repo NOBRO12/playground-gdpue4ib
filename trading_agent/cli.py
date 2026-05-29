@@ -24,6 +24,7 @@ from . import config
 from .evaluation import db, logger as evlogger
 from .evaluation import regime as regime_mod
 from .execution import data, exits
+from .execution.broker import make_client_order_id
 from .execution.state import LiveState
 from .improvement import backtester, promoter, versioning
 from .strategy.registry import load_spec
@@ -281,6 +282,38 @@ def _make_broker(s: config.Settings):
     raise ValueError(f"unknown AGENT_BROKER={s.broker!r}; expected 'alpaca' or 'mock'")
 
 
+def _reconcile_start(broker, champion, s: config.Settings) -> None:
+    """Sync LiveState with the broker's real position at startup.
+
+    A crash/restart must not leave the loop acting on stale state. If we tracked
+    an open position but the broker is flat (a resting stop/take fired, or it was
+    closed out of band), record the close and clear. If the broker holds a
+    position we don't know about, warn rather than guess.
+    """
+    state = LiveState.load(s.live_state_path)
+    held = broker.positions().get(champion.symbol, 0.0)
+    if held <= 0 and state.open_entry_px > 0:
+        with db.session(s.db_path) as conn:
+            evlogger.close_open_trade(
+                conn,
+                symbol=champion.symbol,
+                version=champion.version,
+                exit_ts=datetime.now(timezone.utc).isoformat(),
+                exit_px=state.open_entry_px,  # best estimate; real fill unknown at restart
+                reason_exit="reconciled_flat",
+            )
+        log.warning("reconcile: broker flat but state tracked a position; cleared")
+        state.clear_open()
+        state.save(s.live_state_path)
+    elif held > 0 and state.open_entry_px == 0:
+        log.warning(
+            "reconcile: broker holds %s %s but live state has no open position; "
+            "exit management left to resting orders — verify manually",
+            held,
+            champion.symbol,
+        )
+
+
 def _paper(args: argparse.Namespace) -> int:
     from .guardrails import risk
     from .strategy.registry import from_spec
@@ -298,6 +331,7 @@ def _paper(args: argparse.Namespace) -> int:
         time.sleep(5)
     champion = load_spec(s.strategies_dir / "champion.json")
     broker = _make_broker(s)
+    _reconcile_start(broker, champion, s)
 
     def tick() -> None:
         state = LiveState.load(s.live_state_path)
@@ -372,7 +406,10 @@ def _paper(args: argparse.Namespace) -> int:
                 low, high, state.open_stop_px or float("nan"), state.open_take_px or float("nan")
             )
             if exit_px is not None:
-                fill = broker.submit_market(champion.symbol, "sell", held_qty)
+                coid = make_client_order_id(champion.symbol, f"sell-{reason_exit}", last_ts.isoformat())
+                fill = broker.submit_market(
+                    champion.symbol, "sell", held_qty, client_order_id=coid
+                )
                 with db.session(s.db_path) as conn:
                     evlogger.close_open_trade(
                         conn,
@@ -415,11 +452,16 @@ def _paper(args: argparse.Namespace) -> int:
                 log.info("skip entry: no valid stop (stop_px=%s price=%s)", stop_px, last_close)
                 state.save(s.live_state_path)
                 return
+            coid = make_client_order_id(champion.symbol, "buy", last_ts.isoformat())
             if broker.supports_resting_orders:
                 take_px = exits.take_from_stop(last_close, stop_px, champion.risk.take_profit_r)
-                fill = broker.submit_bracket(champion.symbol, "buy", qty, stop_px, take_px)
+                fill = broker.submit_bracket(
+                    champion.symbol, "buy", qty, stop_px, take_px, client_order_id=coid
+                )
             else:
-                fill = broker.submit_market(champion.symbol, "buy", qty)
+                fill = broker.submit_market(
+                    champion.symbol, "buy", qty, client_order_id=coid
+                )
                 take_px = exits.take_from_stop(
                     fill.avg_price, stop_px, champion.risk.take_profit_r
                 )
@@ -463,7 +505,10 @@ def _paper(args: argparse.Namespace) -> int:
                 state.save(s.live_state_path)
                 return
             broker.cancel_open_orders(champion.symbol)  # clear resting bracket legs first
-            fill = broker.submit_market(champion.symbol, "sell", held_qty)
+            coid = make_client_order_id(champion.symbol, "sell-signal", last_ts.isoformat())
+            fill = broker.submit_market(
+                champion.symbol, "sell", held_qty, client_order_id=coid
+            )
             with db.session(s.db_path) as conn:
                 evlogger.close_open_trade(
                     conn,

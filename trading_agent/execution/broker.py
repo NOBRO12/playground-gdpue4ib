@@ -28,6 +28,13 @@ class Fill:
     order_id: str
 
 
+def make_client_order_id(symbol: str, side: str, ts_iso: str) -> str:
+    """Deterministic idempotency key: replaying the same bar's order is a no-op
+    because Alpaca rejects a duplicate client_order_id. Sanitized + length-capped."""
+    raw = f"{symbol}-{side}-{ts_iso}"
+    return "".join(c for c in raw if c.isalnum() or c in "-_.")[:128]
+
+
 class _AlpacaBrokerBase:
     """Shared client setup + account/position reads for both asset classes."""
 
@@ -76,7 +83,9 @@ class _AlpacaBrokerBase:
 class AlpacaCryptoBroker(_AlpacaBrokerBase):
     """Alpaca crypto broker. 24/7, fractional qty, GTC market orders."""
 
-    def submit_market(self, symbol: str, side: str, qty: float) -> Fill:
+    def submit_market(
+        self, symbol: str, side: str, qty: float, client_order_id: str | None = None
+    ) -> Fill:
         from alpaca.trading.enums import OrderSide, TimeInForce
         from alpaca.trading.requests import MarketOrderRequest
 
@@ -85,6 +94,7 @@ class AlpacaCryptoBroker(_AlpacaBrokerBase):
             qty=qty,
             side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
             time_in_force=TimeInForce.GTC,
+            client_order_id=client_order_id,
         )
         order = self._client.submit_order(req)
         return Fill(
@@ -107,7 +117,13 @@ class AlpacaStockBroker(_AlpacaBrokerBase):
     supports_resting_orders = True
 
     def submit_bracket(
-        self, symbol: str, side: str, qty: float, stop_px: float, take_px: float
+        self,
+        symbol: str,
+        side: str,
+        qty: float,
+        stop_px: float,
+        take_px: float,
+        client_order_id: str | None = None,
     ) -> Fill:
         """Market entry with resting stop-loss + take-profit (OCO) legs.
 
@@ -137,6 +153,7 @@ class AlpacaStockBroker(_AlpacaBrokerBase):
             order_class=OrderClass.BRACKET,
             take_profit=TakeProfitRequest(limit_price=round(take_px, 2)),
             stop_loss=StopLossRequest(stop_price=round(stop_px, 2)),
+            client_order_id=client_order_id,
         )
         order = self._client.submit_order(req)
         return Fill(
@@ -155,7 +172,9 @@ class AlpacaStockBroker(_AlpacaBrokerBase):
         for o in self._client.get_orders(filter=req):
             self._client.cancel_order_by_id(o.id)
 
-    def submit_market(self, symbol: str, side: str, qty: float) -> Fill:
+    def submit_market(
+        self, symbol: str, side: str, qty: float, client_order_id: str | None = None
+    ) -> Fill:
         from alpaca.trading.enums import OrderSide, TimeInForce
         from alpaca.trading.requests import MarketOrderRequest
 
@@ -169,6 +188,7 @@ class AlpacaStockBroker(_AlpacaBrokerBase):
             qty=whole,
             side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
             time_in_force=TimeInForce.DAY,
+            client_order_id=client_order_id,
         )
         order = self._client.submit_order(req)
         return Fill(
