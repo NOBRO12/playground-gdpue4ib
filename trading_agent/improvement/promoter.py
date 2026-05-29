@@ -35,6 +35,12 @@ def _gate(champ: Scorecard, chal: Scorecard) -> tuple[bool, str]:
     chal_dd = abs(chal.max_dd)
     if chal_dd > config.PROMOTE_MAX_DD_RATIO * champ_dd:
         return False, "oos_max_dd_regression"
+    # Benchmark-relative: must make money AND beat buy-and-hold. Taking active
+    # risk to underperform the index is a losing trade by definition.
+    if config.PROMOTE_REQUIRE_POSITIVE_RETURN and chal.total_return <= 0:
+        return False, "negative_absolute_return"
+    if chal.excess_return < config.PROMOTE_MIN_EXCESS_RETURN:
+        return False, "underperforms_benchmark"
     return True, "promoted"
 
 

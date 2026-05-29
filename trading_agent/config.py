@@ -100,3 +100,9 @@ PROMOTE_MIN_SHARPE_DELTA = 0.10
 PROMOTE_MAX_DD_RATIO = 1.20
 PROMOTE_MIN_TRADES = 30
 PROMOTE_MIN_ABS_SHARPE = 0.20
+# Benchmark-relative gate: a challenger must actually MAKE money on the OOS
+# window and BEAT buy-and-hold of the same instrument by at least this margin.
+# A strategy that underperforms simply holding the index isn't worth the risk it
+# takes. Operators can raise PROMOTE_MIN_EXCESS_RETURN to demand a wider edge.
+PROMOTE_REQUIRE_POSITIVE_RETURN = True
+PROMOTE_MIN_EXCESS_RETURN = 0.0  # excess_return (alpha over buy-and-hold) floor
