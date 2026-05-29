@@ -144,7 +144,25 @@ def _improve(args: argparse.Namespace) -> int:
                     "GROUP BY kind ORDER BY c DESC LIMIT 10"
                 ).fetchall()
             summary["recent_guardrail_blocks"] = {r["kind"]: r["c"] for r in rows}
-        result = proposer.propose(champion, summary)
+        n = max(1, getattr(args, "n_challengers", 1))
+        if n == 1:
+            result = proposer.propose(champion, summary)
+        else:
+            # Generate N, score on OOS, keep the best gate-passer (else best by Sharpe).
+            results = proposer.propose_many(champion, summary, n)
+            rank_oos = data.load_window(
+                Path(args.oos_dir) if args.oos_dir else s.oos_dir,
+                champion.symbol,
+                champion.timeframe,
+            )
+            ranked = promoter.rank_challengers(champion, [r.spec for r in results], rank_oos)
+            best_spec, best_decision = ranked[0]
+            result = next(r for r in results if r.spec.version == best_spec.version)
+            log.info(
+                "best-of-%d: chose %s (accepted=%s, sharpe=%.3f)",
+                n, best_spec.version, best_decision.accepted,
+                best_decision.challenger_score.sharpe,
+            )
         challenger = result.spec
         prompt_hash = result.prompt_hash
         response_json = result.response_json
@@ -605,6 +623,12 @@ def main(argv: list[str] | None = None) -> int:
         help="path to a JSON challenger spec; skip Claude API and use this instead",
     )
     imp.add_argument("--oos-dir", help="override OOS bars dir (used by worked example)")
+    imp.add_argument(
+        "--n-challengers",
+        type=int,
+        default=1,
+        help="generate N challengers and promote the best OOS gate-passer (default 1)",
+    )
     imp.add_argument(
         "--expect",
         choices=["accept", "reject"],

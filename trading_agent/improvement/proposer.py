@@ -50,7 +50,13 @@ def _hash(payload: str) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-def propose(champion: StrategySpec, trade_summary: dict[str, Any]) -> ProposalResult:
+def propose(
+    champion: StrategySpec,
+    trade_summary: dict[str, Any],
+    *,
+    tag: str = "",
+    diversity_hint: str = "",
+) -> ProposalResult:
     import anthropic
 
     s = config.load()
@@ -63,6 +69,8 @@ def propose(champion: StrategySpec, trade_summary: dict[str, Any]) -> ProposalRe
         "input_schema": claude_tool_input_schema(),
     }
     body = _prompt_body(champion, trade_summary)
+    if diversity_hint:
+        body += "\n\n" + diversity_hint
     msg = client.messages.create(
         model=s.proposer_model,
         max_tokens=2048,
@@ -76,7 +84,10 @@ def propose(champion: StrategySpec, trade_summary: dict[str, Any]) -> ProposalRe
         raise RuntimeError("Claude did not return a tool_use block")
     raw = dict(tool_block.input)
     raw["parent"] = champion.version
-    raw["version"] = "v-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    version = "v-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    if tag:
+        version += f"-{tag}"  # keep versions unique when proposing many in one second
+    raw["version"] = version
     spec = StrategySpec.model_validate(raw)
     response_json = json.dumps(raw, sort_keys=True)
     return ProposalResult(
@@ -84,6 +95,23 @@ def propose(champion: StrategySpec, trade_summary: dict[str, Any]) -> ProposalRe
         prompt_hash=_hash(SYSTEM + body),
         response_json=response_json,
     )
+
+
+def propose_many(
+    champion: StrategySpec, trade_summary: dict[str, Any], n: int
+) -> list[ProposalResult]:
+    """Generate ``n`` challengers, nudging each toward a distinct direction."""
+    results: list[ProposalResult] = []
+    for i in range(n):
+        hint = (
+            f"This is proposal {i + 1} of {n}. Explore a meaningfully different "
+            "direction from the other proposals (vary which lever you adjust — "
+            "params vs. filters vs. risk)."
+            if n > 1
+            else ""
+        )
+        results.append(propose(champion, trade_summary, tag=str(i + 1), diversity_hint=hint))
+    return results
 
 
 def persist(conn: sqlite3.Connection, parent_version: str, result: ProposalResult) -> int:

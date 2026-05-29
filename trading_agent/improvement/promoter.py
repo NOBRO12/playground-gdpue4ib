@@ -52,3 +52,20 @@ def decide(
         champion_score=champ_run.score,
         challenger_score=chal_run.score,
     )
+
+
+def rank_challengers(
+    champion: StrategySpec,
+    challengers: list[StrategySpec],
+    oos_bars: pd.DataFrame,
+) -> list[tuple[StrategySpec, Decision]]:
+    """Score each challenger on the OOS window, best first.
+
+    Ordering: gate-passers ahead of failers, then by OOS Sharpe. The caller
+    promotes the top entry only if its decision is accepted.
+    """
+    scored = [(c, decide(champion, c, oos_bars)) for c in challengers]
+    scored.sort(
+        key=lambda cd: (cd[1].accepted, cd[1].challenger_score.sharpe), reverse=True
+    )
+    return scored
