@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from ..evaluation import metrics, regime
-from ..execution import exits
+from ..execution import exits, sizing
 from ..strategy.base import Strategy
 from ..strategy.registry import from_spec
 from ..strategy.spec import StrategySpec
@@ -97,8 +97,9 @@ def run(
             if np.isnan(stop_candidate) or stop_candidate >= price:
                 continue
             risk_per_unit = price - stop_candidate
-            notional = cash * pos_pct
-            qty = notional / price
+            qty = sizing.size_position(
+                cash, price, risk_per_unit, pos_pct, spec.risk.risk_per_trade_pct
+            )
             if qty <= 0:
                 continue
             entry_px = price * (1 + cost)

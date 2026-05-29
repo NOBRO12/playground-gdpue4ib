@@ -39,6 +39,10 @@ class RiskSpec(BaseModel):
     atr_mult_stop: float = Field(ge=0.25, le=10.0)
     take_profit_r: float = Field(ge=0.25, le=10.0)
     position_pct: float = Field(ge=0.01, le=0.25)
+    # Optional volatility-targeted sizing: risk this fraction of equity per trade
+    # over the entry-to-stop distance. None = fixed position_pct sizing.
+    # position_pct always remains the hard notional cap.
+    risk_per_trade_pct: Optional[float] = Field(default=None, ge=0.001, le=0.05)
 
 
 class StrategySpec(BaseModel):

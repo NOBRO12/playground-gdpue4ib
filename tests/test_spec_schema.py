@@ -43,6 +43,16 @@ def test_position_pct_capped():
         StrategySpec.model_validate(raw)
 
 
+def test_risk_per_trade_pct_optional_and_bounded():
+    assert StrategySpec.model_validate(_base()).risk.risk_per_trade_pct is None
+    raw = _base()
+    raw["risk"]["risk_per_trade_pct"] = 0.005
+    assert StrategySpec.model_validate(raw).risk.risk_per_trade_pct == 0.005
+    raw["risk"]["risk_per_trade_pct"] = 0.5  # above the 0.05 cap
+    with pytest.raises(ValidationError):
+        StrategySpec.model_validate(raw)
+
+
 def test_ema_fast_lt_slow():
     raw = _base() | {"type": "ema_cross", "params": {"fast": 50, "slow": 10}}
     with pytest.raises(ValidationError):

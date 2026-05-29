@@ -23,7 +23,7 @@ from pathlib import Path
 from . import config
 from .evaluation import db, logger as evlogger
 from .evaluation import regime as regime_mod
-from .execution import data, exits
+from .execution import data, exits, sizing
 from .execution.broker import make_client_order_id
 from .execution.state import LiveState
 from .improvement import backtester, promoter, versioning
@@ -439,8 +439,24 @@ def _paper(args: argparse.Namespace) -> int:
                 return
 
         if bool(sig.at[last_ts, "entry"]) and held_qty == 0:
-            notional = eq * champion.risk.position_pct
-            qty = round(notional / last_close, 6)
+            # Match the backtester: need a valid stop before sizing/entering.
+            stop_px = float(sig.at[last_ts, "stop_px"])
+            if math.isnan(stop_px) or stop_px >= last_close:
+                log.info("skip entry: no valid stop (stop_px=%s price=%s)", stop_px, last_close)
+                state.save(s.live_state_path)
+                return
+            risk_per_unit = last_close - stop_px
+            qty = round(
+                sizing.size_position(
+                    eq,
+                    last_close,
+                    risk_per_unit,
+                    champion.risk.position_pct,
+                    champion.risk.risk_per_trade_pct,
+                ),
+                6,
+            )
+            notional = qty * last_close
             order = risk.Order(champion.symbol, "buy", qty, notional)
             rstate = risk.PortfolioState(
                 equity_usd=eq,
@@ -458,12 +474,6 @@ def _paper(args: argparse.Namespace) -> int:
                         conn, decision.reason, {"order": order.__dict__, "equity": eq}
                     )
                 log.warning("guardrail blocked entry: %s", decision.reason)
-                state.save(s.live_state_path)
-                return
-            # Match the backtester's entry guard: no trade without a valid stop.
-            stop_px = float(sig.at[last_ts, "stop_px"])
-            if math.isnan(stop_px) or stop_px >= last_close:
-                log.info("skip entry: no valid stop (stop_px=%s price=%s)", stop_px, last_close)
                 state.save(s.live_state_path)
                 return
             coid = make_client_order_id(champion.symbol, "buy", last_ts.isoformat())
