@@ -148,3 +148,36 @@ def test_decide_promotes_when_consistent(monkeypatch, bars_trend, donchian_spec)
         donchian_spec, donchian_spec, bars_trend, consistency_bars=bars_trend
     )
     assert decision.accepted and decision.reason == "promoted"
+    assert decision.challenger_stress_score is not None  # stress test was reached
+
+
+def _stub_runs(monkeypatch, base_score, stress_score):
+    """Make backtester.run return base_score at 1x cost and stress_score at >1x."""
+    import pandas as pd
+
+    def fake_run(spec, bars, starting_equity=100_000.0, fee_bps=10.0, slippage_bps=5.0):
+        sc = stress_score if fee_bps > config.BACKTEST_FEE_BPS else base_score
+        return promoter.backtester.BacktestResult(
+            equity=pd.Series([1.0, 1.1]), trades=pd.DataFrame(), score=sc
+        )
+
+    monkeypatch.setattr(promoter.backtester, "run", fake_run)
+
+
+def test_decide_rejects_when_edge_dies_at_2x_cost(monkeypatch, donchian_spec):
+    base = _sc(0.9, -0.05, total_return=0.10, excess_return=0.05)
+    stressed = _sc(0.4, -0.05, total_return=-0.01, excess_return=-0.06)  # gone at 2x
+    _stub_runs(monkeypatch, base, stressed)
+    monkeypatch.setattr(promoter, "_gate", lambda c, ch, sharpe_delta_floor=None: (True, "promoted"))
+    decision = promoter.decide(donchian_spec, donchian_spec, oos_bars=None)
+    assert not decision.accepted and decision.reason == "fails_cost_stress"
+    assert decision.challenger_stress_score.total_return == -0.01
+
+
+def test_decide_promotes_when_edge_survives_2x_cost(monkeypatch, donchian_spec):
+    base = _sc(0.9, -0.05, total_return=0.10, excess_return=0.05)
+    stressed = _sc(0.8, -0.05, total_return=0.07, excess_return=0.03)  # still good
+    _stub_runs(monkeypatch, base, stressed)
+    monkeypatch.setattr(promoter, "_gate", lambda c, ch, sharpe_delta_floor=None: (True, "promoted"))
+    decision = promoter.decide(donchian_spec, donchian_spec, oos_bars=None)
+    assert decision.accepted and decision.reason == "promoted"

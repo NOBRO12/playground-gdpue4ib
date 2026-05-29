@@ -117,3 +117,11 @@ PROMOTE_MIN_EXCESS_RETURN = 0.0  # excess_return (alpha over buy-and-hold) floor
 PROMOTE_CONSISTENCY_FOLDS = 4
 PROMOTE_MIN_POSITIVE_FOLD_FRAC = 0.6
 PROMOTE_TRIALS_PENALTY_COEF = 0.05
+
+# Cost stress test: re-run the OOS backtest at this multiple of modeled costs and
+# require the challenger to STILL make money and beat buy-and-hold. Real slippage
+# is worse than the backtest assumes; an edge that dies at 2x cost is too thin to
+# survive live and would lose real money.
+PROMOTE_COST_STRESS_MULT = 2.0
+BACKTEST_FEE_BPS = 10.0
+BACKTEST_SLIPPAGE_BPS = 5.0

@@ -193,6 +193,11 @@ def _improve(args: argparse.Namespace) -> int:
                 "reason": decision.reason,
                 "champion": decision.champion_score.__dict__,
                 "challenger": decision.challenger_score.__dict__,
+                "challenger_at_2x_cost": (
+                    decision.challenger_stress_score.__dict__
+                    if decision.challenger_stress_score is not None
+                    else None
+                ),
             },
             indent=2,
         )

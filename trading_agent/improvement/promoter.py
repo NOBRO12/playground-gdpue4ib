@@ -22,6 +22,9 @@ class Decision:
     reason: str
     champion_score: Scorecard
     challenger_score: Scorecard
+    # Challenger re-scored at PROMOTE_COST_STRESS_MULT x costs (None if the
+    # stress test was never reached because an earlier check rejected first).
+    challenger_stress_score: Scorecard | None = None
 
 
 def trials_penalty(n_trials: int) -> float:
@@ -97,11 +100,30 @@ def decide(
         frac = consistency(challenger, consistency_bars)
         if frac is not None and frac < config.PROMOTE_MIN_POSITIVE_FOLD_FRAC:
             accepted, reason = False, "inconsistent_oos"
+    # Cost stress: an edge that only survives the modeled costs is too thin for
+    # the worse slippage of live trading. Require it to still make money and beat
+    # buy-and-hold at PROMOTE_COST_STRESS_MULT x costs.
+    stress_score: Scorecard | None = None
+    if accepted:
+        mult = config.PROMOTE_COST_STRESS_MULT
+        stress_run = backtester.run(
+            challenger,
+            oos_bars,
+            fee_bps=config.BACKTEST_FEE_BPS * mult,
+            slippage_bps=config.BACKTEST_SLIPPAGE_BPS * mult,
+        )
+        stress_score = stress_run.score
+        if (
+            stress_score.total_return <= 0
+            or stress_score.excess_return < config.PROMOTE_MIN_EXCESS_RETURN
+        ):
+            accepted, reason = False, "fails_cost_stress"
     return Decision(
         accepted=accepted,
         reason=reason,
         champion_score=champ_run.score,
         challenger_score=chal_run.score,
+        challenger_stress_score=stress_score,
     )
 
 

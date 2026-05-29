@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from .. import config
 from ..evaluation import metrics, regime
 from ..execution import exits, sizing
 from ..strategy.base import Strategy
@@ -31,8 +32,8 @@ def run(
     spec: StrategySpec,
     bars: pd.DataFrame,
     starting_equity: float = 100_000.0,
-    fee_bps: float = 10.0,
-    slippage_bps: float = 5.0,
+    fee_bps: float = config.BACKTEST_FEE_BPS,
+    slippage_bps: float = config.BACKTEST_SLIPPAGE_BPS,
 ) -> BacktestResult:
     strat: Strategy = from_spec(spec)
     sig = strat.signals(bars)
