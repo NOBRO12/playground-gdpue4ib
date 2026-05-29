@@ -125,3 +125,9 @@ PROMOTE_TRIALS_PENALTY_COEF = 0.05
 PROMOTE_COST_STRESS_MULT = 2.0
 BACKTEST_FEE_BPS = 10.0
 BACKTEST_SLIPPAGE_BPS = 5.0
+
+# Fractional-Kelly sizing only engages after the strategy has demonstrated an
+# edge over at least this many realized (closed) live trades. Below it, sizing
+# falls back to the conservative fixed/risk-targeted path — never scale up on a
+# handful of lucky fills.
+KELLY_MIN_TRADES = 20

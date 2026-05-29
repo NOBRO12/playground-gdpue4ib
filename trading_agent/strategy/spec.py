@@ -61,6 +61,11 @@ class RiskSpec(BaseModel):
     # over the entry-to-stop distance. None = fixed position_pct sizing.
     # position_pct always remains the hard notional cap.
     risk_per_trade_pct: Optional[float] = Field(default=None, ge=0.001, le=0.05)
+    # Optional fractional-Kelly sizing: scale the per-trade risk by this fraction
+    # of full Kelly, computed from the strategy's *realized* edge. Capped at half
+    # Kelly to avoid full-Kelly drawdowns; None = off. Always clamped by
+    # position_pct / MAX_POSITION_PCT, so it can only size down from the cap.
+    kelly_fraction: Optional[float] = Field(default=None, gt=0.0, le=0.5)
 
 
 class StrategySpec(BaseModel):

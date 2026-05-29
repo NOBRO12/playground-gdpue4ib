@@ -53,6 +53,19 @@ def test_risk_per_trade_pct_optional_and_bounded():
         StrategySpec.model_validate(raw)
 
 
+def test_kelly_fraction_optional_and_capped_at_half():
+    assert StrategySpec.model_validate(_base()).risk.kelly_fraction is None
+    raw = _base()
+    raw["risk"]["kelly_fraction"] = 0.25
+    assert StrategySpec.model_validate(raw).risk.kelly_fraction == 0.25
+    raw["risk"]["kelly_fraction"] = 0.75  # above the 0.5 half-Kelly cap
+    with pytest.raises(ValidationError):
+        StrategySpec.model_validate(raw)
+    raw["risk"]["kelly_fraction"] = 0.0  # must be > 0 when set
+    with pytest.raises(ValidationError):
+        StrategySpec.model_validate(raw)
+
+
 def test_ema_fast_lt_slow():
     raw = _base() | {"type": "ema_cross", "params": {"fast": 50, "slow": 10}}
     with pytest.raises(ValidationError):

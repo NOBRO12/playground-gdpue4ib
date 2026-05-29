@@ -239,6 +239,28 @@ def _improve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _realized_edge(
+    conn, symbol: str, version: str
+) -> tuple[int, float | None, float | None]:
+    """Realized (n_closed, win_rate, payoff_ratio) for a strategy version from
+    its closed live trades' P&L. payoff_ratio = avg win / avg loss. Returns
+    (n, None, None) when there aren't both wins and losses to estimate from."""
+    rows = conn.execute(
+        "SELECT pnl_usd FROM trades WHERE symbol = ? AND version = ? "
+        "AND pnl_usd IS NOT NULL",
+        (symbol, version),
+    ).fetchall()
+    pnls = [float(r["pnl_usd"]) for r in rows]
+    n = len(pnls)
+    wins = [x for x in pnls if x > 0]
+    losses = [-x for x in pnls if x < 0]
+    if not wins or not losses:
+        return n, None, None
+    win_rate = len(wins) / n
+    payoff_ratio = (sum(wins) / len(wins)) / (sum(losses) / len(losses))
+    return n, win_rate, payoff_ratio
+
+
 def _status(args: argparse.Namespace) -> int:
     s = config.load()
     champion = load_spec(s.strategies_dir / "champion.json")
@@ -526,6 +548,17 @@ def _paper(args: argparse.Namespace) -> int:
                 state.save(s.live_state_path)
                 return
             risk_per_unit = last_close - stop_px
+            # Fractional-Kelly scales by the realized edge, but only once enough
+            # closed trades exist to trust it; otherwise edge stays None and
+            # size_position falls back to fixed / risk-targeted sizing.
+            k_win = k_payoff = None
+            if champion.risk.kelly_fraction:
+                with db.session(s.db_path) as conn:
+                    n_closed, k_win, k_payoff = _realized_edge(
+                        conn, champion.symbol, champion.version
+                    )
+                if n_closed < config.KELLY_MIN_TRADES:
+                    k_win = k_payoff = None
             qty = round(
                 sizing.size_position(
                     eq,
@@ -533,6 +566,9 @@ def _paper(args: argparse.Namespace) -> int:
                     risk_per_unit,
                     champion.risk.position_pct,
                     champion.risk.risk_per_trade_pct,
+                    kelly_fraction=champion.risk.kelly_fraction,
+                    win_rate=k_win,
+                    payoff_ratio=k_payoff,
                 ),
                 6,
             )
