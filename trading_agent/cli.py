@@ -27,6 +27,7 @@ from .execution import data, exits, sizing
 from .execution.broker import make_client_order_id
 from .execution.state import LiveState
 from .improvement import backtester, promoter, versioning
+from .notify import notify
 from .strategy.registry import load_spec
 from .strategy.spec import StrategySpec
 
@@ -213,6 +214,12 @@ def _improve(args: argparse.Namespace) -> int:
             versioning.promote(conn, challenger, s.strategies_dir)
         else:
             versioning.reject(conn, challenger, s.strategies_dir, decision.reason)
+    if decision.accepted:
+        notify(
+            "promotion",
+            {"version": challenger.version, "parent": champion.version},
+            s,
+        )
     return 0
 
 
@@ -401,6 +408,7 @@ def _paper(args: argparse.Namespace) -> int:
                         {"dd": dd, "equity": eq, "peak": state.peak_equity_usd},
                     )
                 log.warning("hard DD kill tripped at %.2f%%", dd * 100)
+                notify("kill_switch", {"dd_pct": round(dd * 100, 2), "equity": eq}, s)
                 return
 
         exposure = held_qty * last_close
@@ -424,6 +432,7 @@ def _paper(args: argparse.Namespace) -> int:
                     reason_exit="resting_stop_or_take",
                 )
             log.info("resting stop/take fired for %s; position flat", champion.symbol)
+            notify("exit", {"symbol": champion.symbol, "reason": "resting_stop_or_take"}, s)
             state.clear_open()
             state.save(s.live_state_path)
             return
@@ -451,6 +460,7 @@ def _paper(args: argparse.Namespace) -> int:
                         reason_exit=reason_exit,
                     )
                 log.info("%s exit %s qty=%s px=%s", reason_exit, fill.symbol, fill.qty, exit_px)
+                notify("exit", {"symbol": champion.symbol, "reason": reason_exit, "px": exit_px}, s)
                 state.clear_open()
                 state.save(s.live_state_path)
                 return
@@ -491,6 +501,7 @@ def _paper(args: argparse.Namespace) -> int:
                         conn, decision.reason, {"order": order.__dict__, "equity": eq}
                     )
                 log.warning("guardrail blocked entry: %s", decision.reason)
+                notify("guardrail_block", {"side": "buy", "reason": decision.reason}, s)
                 state.save(s.live_state_path)
                 return
             coid = make_client_order_id(champion.symbol, "buy", last_ts.isoformat())
@@ -524,6 +535,11 @@ def _paper(args: argparse.Namespace) -> int:
                     meta={"order_id": fill.order_id},
                 )
             log.info("filled %s qty=%s px=%s", fill.symbol, fill.qty, fill.avg_price)
+            notify(
+                "entry_fill",
+                {"symbol": fill.symbol, "qty": fill.qty, "px": fill.avg_price},
+                s,
+            )
 
         elif bool(sig.at[last_ts, "exit"]) and held_qty > 0:
             order = risk.Order(champion.symbol, "sell", held_qty, held_qty * last_close)
@@ -543,6 +559,7 @@ def _paper(args: argparse.Namespace) -> int:
                         conn, decision.reason, {"order": order.__dict__, "equity": eq}
                     )
                 log.warning("guardrail blocked exit: %s", decision.reason)
+                notify("guardrail_block", {"side": "sell", "reason": decision.reason}, s)
                 state.save(s.live_state_path)
                 return
             broker.cancel_open_orders(champion.symbol)  # clear resting bracket legs first
@@ -561,6 +578,11 @@ def _paper(args: argparse.Namespace) -> int:
                 )
             state.clear_open()
             log.info("exited %s qty=%s px=%s", fill.symbol, fill.qty, fill.avg_price)
+            notify(
+                "exit",
+                {"symbol": fill.symbol, "reason": "signal_exit", "px": fill.avg_price},
+                s,
+            )
 
         state.save(s.live_state_path)
 

@@ -22,6 +22,8 @@ class Settings:
     mock_broker_path: Path
     asset_class: str  # "stock" | "crypto"
     stock_feed: str  # "iex" (free) | "sip" (paid) — stock market data feed
+    notify: str  # "none" | "webhook"
+    notify_webhook_url: str | None
     live_mode: bool  # False = paper endpoint; True = real-money live endpoint
     alpaca_key: str | None
     alpaca_secret: str | None
@@ -52,6 +54,8 @@ def load() -> Settings:
         ),
         asset_class=os.environ.get("AGENT_ASSET_CLASS", "stock").lower(),
         stock_feed=os.environ.get("AGENT_STOCK_FEED", "iex").lower(),
+        notify=os.environ.get("AGENT_NOTIFY", "none").lower(),
+        notify_webhook_url=os.environ.get("AGENT_NOTIFY_WEBHOOK_URL"),
         live_mode=os.environ.get("AGENT_LIVE_MODE", "false").lower() in ("1", "true", "yes"),
         alpaca_key=os.environ.get("ALPACA_KEY"),
         alpaca_secret=os.environ.get("ALPACA_SECRET"),
