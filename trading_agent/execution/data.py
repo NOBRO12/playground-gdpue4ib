@@ -133,3 +133,14 @@ def fetch_live(symbol: str, timeframe: str, lookback_hours: int = 200) -> pd.Dat
     end = datetime.now(timezone.utc)
     start = end - pd.Timedelta(hours=lookback_hours)
     return fetch_history(symbol, timeframe, start, end)
+
+
+def bar_age_seconds(bars: pd.DataFrame, now: datetime | None = None) -> float:
+    """Seconds between the most recent bar's timestamp and ``now`` (UTC).
+
+    Used by the live loop's staleness circuit breaker: a market-data outage
+    leaves the last bar far in the past, and trading on it is dangerous.
+    """
+    now = now or datetime.now(timezone.utc)
+    last = pd.Timestamp(bars.index[-1]).to_pydatetime()
+    return (now - last).total_seconds()

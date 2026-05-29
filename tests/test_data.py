@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -52,3 +54,12 @@ def test_csv_round_trip_preserves_ohlcv(tmp_path):
     loaded = data.load_csv(path)
     for col in ["open", "high", "low", "close", "volume"]:
         np.testing.assert_allclose(loaded[col].values, bars[col].values, rtol=1e-9)
+
+
+def test_bar_age_seconds_measures_last_bar():
+    idx = pd.to_datetime(
+        ["2024-05-01T00:00:00Z", "2024-05-01T01:00:00Z"], utc=True
+    )
+    bars = pd.DataFrame({"close": [1.0, 2.0]}, index=idx)
+    now = datetime(2024, 5, 1, 3, 0, 0, tzinfo=timezone.utc)  # 2h after last bar
+    assert data.bar_age_seconds(bars, now=now) == 2 * 3600

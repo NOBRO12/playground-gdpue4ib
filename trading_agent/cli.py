@@ -347,6 +347,20 @@ def _paper(args: argparse.Namespace) -> int:
         sig = from_spec(champion).signals(bars)
         last_ts = bars.index[-1]
         last_close = float(bars["close"].iloc[-1])
+
+        # Staleness circuit breaker: don't trade on a stale last bar (data outage).
+        age = data.bar_age_seconds(bars)
+        max_age = config.MAX_BAR_AGE_SECONDS.get(champion.timeframe, 0)
+        if max_age and age > max_age:
+            with db.session(s.db_path) as conn:
+                evlogger.log_guardrail(
+                    conn,
+                    "stale_data",
+                    {"age_seconds": age, "timeframe": champion.timeframe, "last_bar": last_ts.isoformat()},
+                )
+            log.warning("stale data: last bar %.0fs old (max %ds); tick skipped", age, max_age)
+            return
+
         broker.mark(champion.symbol, last_close)
 
         eq = broker.equity()

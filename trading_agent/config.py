@@ -82,6 +82,15 @@ NO_SHORTS = True
 PDT_EQUITY_THRESHOLD_USD = 25_000.0
 MAX_DAY_TRADES_PER_5D = 3
 
+# Data-staleness circuit breaker: max age of the latest bar before the live loop
+# refuses to trade (market-data outage / gap). The 1d window absorbs weekends and
+# holidays; 1h/4h allow a couple of missed bars.
+MAX_BAR_AGE_SECONDS = {
+    "1h": 2 * 3600,
+    "4h": 8 * 3600,
+    "1d": 3 * 86_400,
+}
+
 # Promotion gate constants.
 PROMOTE_MIN_SHARPE_DELTA = 0.10
 PROMOTE_MAX_DD_RATIO = 1.20
