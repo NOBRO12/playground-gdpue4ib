@@ -129,22 +129,21 @@ def _improve(args: argparse.Namespace) -> int:
         prompt_hash = "fixture"
         response_json = json.dumps(challenger_raw, sort_keys=True)
     else:
-        from .improvement import proposer
+        from .improvement import proposer, summary as summary_mod
 
         is_bars = data.load_window(s.is_dir, champion.symbol, champion.timeframe)
         champ_run = backtester.run(champion, is_bars)
-        summary = {
-            "n_trades": champ_run.score.n_trades,
-            "sharpe": round(champ_run.score.sharpe, 3),
-            "max_dd": round(champ_run.score.max_dd, 3),
-            "win_rate": round(champ_run.score.win_rate, 3),
-            "expectancy_r": round(champ_run.score.expectancy_r, 3),
-            "by_regime": (
-                champ_run.trades.groupby("regime")["pnl_r"].agg(["count", "mean"]).to_dict()
-                if len(champ_run.trades)
-                else {}
-            ),
-        }
+        summary = summary_mod.build_trade_summary(
+            champ_run.score, champ_run.trades, champ_run.equity
+        )
+        # Recent guardrail blocks (live) give the proposer real failure context.
+        if s.db_path.exists():
+            with db.session(s.db_path) as conn:
+                rows = conn.execute(
+                    "SELECT kind, COUNT(*) AS c FROM guardrail_events "
+                    "GROUP BY kind ORDER BY c DESC LIMIT 10"
+                ).fetchall()
+            summary["recent_guardrail_blocks"] = {r["kind"]: r["c"] for r in rows}
         result = proposer.propose(champion, summary)
         challenger = result.spec
         prompt_hash = result.prompt_hash

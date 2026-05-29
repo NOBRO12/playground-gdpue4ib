@@ -18,12 +18,15 @@ from typing import Any
 from .. import config
 from ..strategy.spec import StrategySpec, claude_tool_input_schema
 
-SYSTEM = """You are a quantitative researcher improving a crypto trading strategy.
-You are given the current champion spec, summary stats by regime, and recent
-trade outcomes from an in-sample window. Propose ONE challenger spec that may
-improve risk-adjusted returns. Stay strictly within the schema. Only change
-parameters/filters/risk; keep type and symbol unchanged unless clearly warranted.
-Bias toward small, defensible changes."""
+SYSTEM = """You are a quantitative researcher improving a systematic trading
+strategy. The instrument (stock or crypto) is given by the champion spec's
+symbol/timeframe — work with whatever it is. You are given the current champion
+spec and an in-sample summary: risk-adjusted metrics, drawdown depth/duration,
+longest losing streak, per-regime expectancy and win-rate, and recent live
+guardrail blocks. Propose ONE challenger spec that may improve risk-adjusted
+returns. Stay strictly within the schema. Only change parameters/filters/risk;
+keep type and symbol unchanged unless clearly warranted. Bias toward small,
+defensible changes."""
 
 
 @dataclass(frozen=True)
