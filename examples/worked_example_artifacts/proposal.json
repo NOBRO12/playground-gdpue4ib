@@ -1,7 +1,7 @@
 {
   "type": "donchian",
-  "symbol": "BTC/USD",
-  "timeframe": "1h",
+  "symbol": "SPY",
+  "timeframe": "1d",
   "params": {
     "entry_lookback": 20,
     "exit_lookback": 10

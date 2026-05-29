@@ -52,6 +52,8 @@ def _check_keys(args: argparse.Namespace) -> int:
         s.alpaca_secret,
         anthropic_model=model,
         alpaca_paper=not s.live_mode,
+        asset_class=s.asset_class,
+        stock_feed=s.stock_feed,
     )
 
     if args.json:
@@ -267,9 +269,14 @@ def _make_broker(s: config.Settings):
         log.info("using MockBroker (state at %s)", s.mock_broker_path)
         return MockBroker(state_path=s.mock_broker_path)
     if s.broker == "alpaca":
-        from .execution.broker import AlpacaCryptoBroker
+        if s.asset_class == "crypto":
+            from .execution.broker import AlpacaCryptoBroker
 
-        return AlpacaCryptoBroker()
+            return AlpacaCryptoBroker()
+        from .execution.broker import AlpacaStockBroker
+
+        log.info("using AlpacaStockBroker (feed=%s)", s.stock_feed)
+        return AlpacaStockBroker()
     raise ValueError(f"unknown AGENT_BROKER={s.broker!r}; expected 'alpaca' or 'mock'")
 
 
@@ -297,6 +304,10 @@ def _paper(args: argparse.Namespace) -> int:
             log.warning("kill switch tripped; tick skipped")
             return
 
+        if not broker.is_market_open():
+            log.info("market closed; tick skipped")
+            return
+
         bars = data.fetch_live(champion.symbol, champion.timeframe)
         sig = from_spec(champion).signals(bars)
         last_ts = bars.index[-1]
@@ -307,6 +318,7 @@ def _paper(args: argparse.Namespace) -> int:
         cash = broker.cash()
         positions = broker.positions()
         held_qty = positions.get(champion.symbol, 0.0)
+        day_trades = broker.daytrade_count()
         today = datetime.now(timezone.utc).date().isoformat()
         state.observe(eq, today)
 
@@ -344,6 +356,7 @@ def _paper(args: argparse.Namespace) -> int:
                 trades_today=state.trades_today,
                 current_qty=held_qty,
                 kill_switch_tripped=state.kill_switch_tripped,
+                day_trades_in_window=day_trades,
             )
             decision = risk.allow(order, rstate)
             if not decision.allowed:
@@ -380,6 +393,7 @@ def _paper(args: argparse.Namespace) -> int:
                 trades_today=state.trades_today,
                 current_qty=held_qty,
                 kill_switch_tripped=state.kill_switch_tripped,
+                day_trades_in_window=day_trades,
             )
             decision = risk.allow(order, rstate)
             if not decision.allowed:
@@ -417,7 +431,9 @@ def _paper(args: argparse.Namespace) -> int:
             )
         )
 
-    scheduler.run_forever(tick, improve_job)
+    # Daily-bar strategies only need one tick per trading day; intraday bars tick hourly.
+    cadence = "daily_open" if champion.timeframe == "1d" else "hourly"
+    scheduler.run_forever(tick, improve_job, cadence=cadence)
     return 0
 
 
@@ -439,8 +455,8 @@ def main(argv: list[str] | None = None) -> int:
     ck.set_defaults(func=_check_keys)
 
     fb = sub.add_parser("fetch-bars")
-    fb.add_argument("--symbol", default="BTC/USD")
-    fb.add_argument("--timeframe", default="1h", choices=["1h", "4h", "1d"])
+    fb.add_argument("--symbol", default="SPY")
+    fb.add_argument("--timeframe", default="1d", choices=["1h", "4h", "1d"])
     fb.add_argument("--start", required=True, help="ISO date, e.g. 2024-01-01")
     fb.add_argument("--end", required=True, help="ISO date, e.g. 2024-09-30")
     fb.add_argument("--to", required=True, choices=["is", "oos"])

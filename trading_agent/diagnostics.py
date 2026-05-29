@@ -54,6 +54,7 @@ def check_alpaca_trading(
 
 
 def check_alpaca_data(symbol: str = "BTC/USD", timeframe: str = "1h") -> dict[str, str]:
+    """Crypto market-data reachability (unauthenticated endpoint)."""
     try:
         from .execution.data import fetch_history
 
@@ -65,18 +66,54 @@ def check_alpaca_data(symbol: str = "BTC/USD", timeframe: str = "1h") -> dict[st
         return _result("alpaca-data", "FAIL", f"{type(exc).__name__}: {exc}")
 
 
+def check_alpaca_stock_data(
+    key: str | None, secret: str | None, feed: str = "iex", symbol: str = "SPY"
+) -> dict[str, str]:
+    """Authenticated stock market-data reachability (validates keys + feed access)."""
+    if not key or not secret:
+        return _result("alpaca-stock-data", "SKIPPED", "ALPACA_KEY/ALPACA_SECRET not set")
+    try:
+        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+
+        end = datetime.now(timezone.utc) - timedelta(days=1)
+        start = end - timedelta(days=7)
+        client = StockHistoricalDataClient(key, secret)
+        req = StockBarsRequest(
+            symbol_or_symbols=[symbol],
+            timeframe=TimeFrame(1, TimeFrameUnit.Day),
+            start=start,
+            end=end,
+            feed=feed,
+        )
+        bars = client.get_stock_bars(req).df
+        return _result(
+            "alpaca-stock-data", "OK", f"got {len(bars)} {symbol} 1d bars (feed={feed})"
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _result("alpaca-stock-data", "FAIL", f"{type(exc).__name__}: {exc}")
+
+
 def run_all(
     anthropic_key: str | None,
     alpaca_key: str | None,
     alpaca_secret: str | None,
     anthropic_model: str | None = None,
     alpaca_paper: bool = True,
+    asset_class: str = "crypto",
+    stock_feed: str = "iex",
 ) -> list[dict[str, str]]:
     anthropic_kwargs = {"model": anthropic_model} if anthropic_model else {}
+    data_check = (
+        check_alpaca_stock_data(alpaca_key, alpaca_secret, feed=stock_feed)
+        if asset_class == "stock"
+        else check_alpaca_data()
+    )
     return [
         check_anthropic(anthropic_key, **anthropic_kwargs),
         check_alpaca_trading(alpaca_key, alpaca_secret, paper=alpaca_paper),
-        check_alpaca_data(),
+        data_check,
     ]
 
 

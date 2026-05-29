@@ -22,6 +22,7 @@ class PortfolioState:
     trades_today: int
     current_qty: float  # qty currently held in order.symbol (>=0 for long-only)
     kill_switch_tripped: bool
+    day_trades_in_window: int = 0  # rolling 5-day day-trade count (0 for crypto)
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,20 @@ def allow(order: Order, state: PortfolioState) -> Decision:
         day_pnl_pct = state.equity_usd / state.day_start_equity_usd - 1.0
         if day_pnl_pct <= config.MAX_DAILY_LOSS_PCT:
             return Decision(False, "daily_loss_cap")
+
+    # PDT (US equities): under the equity threshold, don't open a new position
+    # that could force a 4th day-trade in the rolling 5-day window. We gate the
+    # entry only — exits are never blocked (we must always be able to close a
+    # position), and Alpaca itself rejects an order that would breach PDT as the
+    # hard backstop. We leave one slot of headroom so a same-day forced exit of a
+    # just-opened position still stays within the limit. Inert for crypto, whose
+    # broker reports day_trades_in_window == 0.
+    if (
+        order.side == "buy"
+        and state.equity_usd < config.PDT_EQUITY_THRESHOLD_USD
+        and state.day_trades_in_window >= config.MAX_DAY_TRADES_PER_5D - 1
+    ):
+        return Decision(False, "pdt_limit")
 
     if order.side == "buy" and state.trades_today >= config.MAX_TRADES_PER_DAY:
         return Decision(False, "max_trades_per_day")

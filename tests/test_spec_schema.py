@@ -24,10 +24,16 @@ def test_valid_donchian():
     assert spec.params["entry_lookback"] == 20
 
 
-def test_invalid_symbol_rejected():
-    raw = _base() | {"symbol": "DOGE/USD"}
-    with pytest.raises(ValidationError):
-        StrategySpec.model_validate(raw)
+def test_stock_symbol_accepted():
+    spec = StrategySpec.model_validate(_base() | {"symbol": "SPY", "timeframe": "1d"})
+    assert spec.symbol == "SPY"
+
+
+def test_malformed_symbol_rejected():
+    # Lowercase / too long / punctuation don't match the ticker-or-pair pattern.
+    for bad in ("spy", "TOOLONG", "BAD!", "AA/EUR"):
+        with pytest.raises(ValidationError):
+            StrategySpec.model_validate(_base() | {"symbol": bad})
 
 
 def test_position_pct_capped():

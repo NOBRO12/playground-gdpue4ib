@@ -61,27 +61,68 @@ def write_csv(bars: pd.DataFrame, path: str | Path, overwrite: bool = False) -> 
     return path
 
 
+def _tf_map():
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+
+    return {
+        "1h": TimeFrame(1, TimeFrameUnit.Hour),
+        "4h": TimeFrame(4, TimeFrameUnit.Hour),
+        "1d": TimeFrame(1, TimeFrameUnit.Day),
+    }
+
+
+def _fetch_crypto(symbol: str, timeframe: str, start: datetime, end: datetime) -> pd.DataFrame:
+    from alpaca.data.historical import CryptoHistoricalDataClient
+    from alpaca.data.requests import CryptoBarsRequest
+
+    client = CryptoHistoricalDataClient()  # crypto market data is unauthenticated
+    req = CryptoBarsRequest(
+        symbol_or_symbols=[symbol], timeframe=_tf_map()[timeframe], start=start, end=end
+    )
+    return client.get_crypto_bars(req).df
+
+
+def _fetch_stock(symbol: str, timeframe: str, start: datetime, end: datetime) -> pd.DataFrame:
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockBarsRequest
+
+    from .. import config
+
+    s = config.load()
+    if not s.alpaca_key or not s.alpaca_secret:
+        raise RuntimeError(
+            "ALPACA_KEY/ALPACA_SECRET required for stock market data "
+            "(unlike crypto, the equities feed is authenticated)"
+        )
+    client = StockHistoricalDataClient(s.alpaca_key, s.alpaca_secret)
+    req = StockBarsRequest(
+        symbol_or_symbols=[symbol],
+        timeframe=_tf_map()[timeframe],
+        start=start,
+        end=end,
+        feed=s.stock_feed,  # "iex" (free) or "sip" (paid)
+    )
+    return client.get_stock_bars(req).df
+
+
 def fetch_history(
     symbol: str,
     timeframe: str,
     start: datetime,
     end: datetime,
 ) -> pd.DataFrame:
-    """Pull historical crypto bars from Alpaca between start and end (UTC)."""
-    from alpaca.data.historical import CryptoHistoricalDataClient
-    from alpaca.data.requests import CryptoBarsRequest
-    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+    """Pull historical bars from Alpaca between start and end (UTC).
 
-    tf_map = {
-        "1h": TimeFrame(1, TimeFrameUnit.Hour),
-        "4h": TimeFrame(4, TimeFrameUnit.Hour),
-        "1d": TimeFrame(1, TimeFrameUnit.Day),
-    }
-    client = CryptoHistoricalDataClient()  # crypto market data is unauthenticated
-    req = CryptoBarsRequest(
-        symbol_or_symbols=[symbol], timeframe=tf_map[timeframe], start=start, end=end
-    )
-    bars = client.get_crypto_bars(req).df
+    Routes to the stock or crypto data API based on ``AGENT_ASSET_CLASS``.
+    Both return the same MultiIndex (symbol, timestamp) OHLCV frame, normalized
+    to a flat UTC-indexed OHLCV frame here.
+    """
+    from .. import config
+
+    if config.load().asset_class == "crypto":
+        bars = _fetch_crypto(symbol, timeframe, start, end)
+    else:
+        bars = _fetch_stock(symbol, timeframe, start, end)
     if isinstance(bars.index, pd.MultiIndex):
         bars = bars.xs(symbol, level=0)
     return _normalize(bars.reset_index())

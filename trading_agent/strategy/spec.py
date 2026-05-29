@@ -6,7 +6,10 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-Symbol = Literal["BTC/USD", "ETH/USD"]
+# A US-equity ticker (1–5 uppercase letters, e.g. SPY, AAPL) or a crypto pair
+# (e.g. BTC/USD). Constrained by pattern rather than a free string so the LLM
+# proposer can't emit arbitrary/illiquid symbols, but isn't locked to crypto.
+SYMBOL_PATTERN = r"^([A-Z]{1,5}|[A-Z]{2,5}/USD)$"
 Timeframe = Literal["1h", "4h", "1d"]
 StrategyType = Literal["donchian", "ema_cross"]
 
@@ -40,7 +43,7 @@ class RiskSpec(BaseModel):
 
 class StrategySpec(BaseModel):
     type: StrategyType
-    symbol: Symbol
+    symbol: str = Field(pattern=SYMBOL_PATTERN)
     timeframe: Timeframe
     params: dict[str, Any]
     filters: Filters = Field(default_factory=Filters)

@@ -13,8 +13,8 @@
     "position_pct": 0.10,
     "take_profit_r": 3.0
   },
-  "symbol": "BTC/USD",
-  "timeframe": "1h",
+  "symbol": "SPY",
+  "timeframe": "1d",
   "type": "donchian",
   "version": "v0-baseline"
 }

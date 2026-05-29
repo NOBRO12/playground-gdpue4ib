@@ -68,6 +68,14 @@ class MockBroker:
     def positions(self) -> dict[str, float]:
         return {s: p["qty"] for s, p in self._positions.items() if p["qty"] > 0}
 
+    def is_market_open(self) -> bool:
+        """Always open offline — interface parity with the Alpaca brokers."""
+        return True
+
+    def daytrade_count(self) -> int:
+        """No PDT tracking offline — interface parity with the Alpaca brokers."""
+        return 0
+
     def submit_market(self, symbol: str, side: str, qty: float) -> Fill:
         if symbol not in self._marks:
             raise RuntimeError(

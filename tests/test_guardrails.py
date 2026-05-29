@@ -77,3 +77,43 @@ def test_exits_not_blocked_by_daily_loss_cap():
         ),
     )
     assert d.allowed
+
+
+def test_pdt_blocks_entry_under_threshold_at_headroom():
+    # equity < $25k and 2 day-trades already used (headroom = 1) → block new entry.
+    d = allow(
+        Order("SPY", "buy", 1.0, 600.0),
+        _state(equity_usd=10_000.0, peak_equity_usd=10_000.0,
+               day_start_equity_usd=10_000.0, day_trades_in_window=2),
+    )
+    assert not d.allowed and d.reason == "pdt_limit"
+
+
+def test_pdt_does_not_block_exit():
+    # Even at/over the limit, exits must always be allowed.
+    d = allow(
+        Order("SPY", "sell", 1.0, 600.0),
+        _state(equity_usd=10_000.0, peak_equity_usd=10_000.0,
+               day_start_equity_usd=10_000.0, current_qty=1.0, day_trades_in_window=3),
+    )
+    assert d.allowed
+
+
+def test_pdt_inert_above_equity_threshold():
+    # >= $25k: PDT rule does not apply, so a buy is allowed despite the count.
+    d = allow(
+        Order("SPY", "buy", 1.0, 600.0),
+        _state(equity_usd=30_000.0, peak_equity_usd=30_000.0,
+               day_start_equity_usd=30_000.0, day_trades_in_window=5),
+    )
+    assert d.allowed
+
+
+def test_pdt_inert_for_crypto_default_count():
+    # Crypto brokers report day_trades_in_window=0 (the default), so even a tiny
+    # account is unaffected by the PDT gate.
+    d = allow(
+        Order("BTC/USD", "buy", 0.01, 300.0),
+        _state(equity_usd=5_000.0, peak_equity_usd=5_000.0, day_start_equity_usd=5_000.0),
+    )
+    assert d.allowed

@@ -20,6 +20,8 @@ class Settings:
     live_state_path: Path
     broker: str  # "alpaca" | "mock"
     mock_broker_path: Path
+    asset_class: str  # "stock" | "crypto"
+    stock_feed: str  # "iex" (free) | "sip" (paid) — stock market data feed
     live_mode: bool  # False = paper endpoint; True = real-money live endpoint
     alpaca_key: str | None
     alpaca_secret: str | None
@@ -48,6 +50,8 @@ def load() -> Settings:
         mock_broker_path=Path(
             os.environ.get("AGENT_MOCK_BROKER_PATH", root / "data" / "mock_broker.json")
         ),
+        asset_class=os.environ.get("AGENT_ASSET_CLASS", "stock").lower(),
+        stock_feed=os.environ.get("AGENT_STOCK_FEED", "iex").lower(),
         live_mode=os.environ.get("AGENT_LIVE_MODE", "false").lower() in ("1", "true", "yes"),
         alpaca_key=os.environ.get("ALPACA_KEY"),
         alpaca_secret=os.environ.get("ALPACA_SECRET"),
@@ -71,6 +75,12 @@ MAX_TRADES_PER_DAY = 8
 MAX_POSITION_PCT = 0.25
 LEVERAGE = 1.0
 NO_SHORTS = True
+
+# Pattern Day Trader rule (US equities): under this equity threshold a margin
+# account is capped at MAX_DAY_TRADES_PER_5D day-trades per rolling 5 business
+# days. Inert for crypto (the broker reports a day-trade count of 0).
+PDT_EQUITY_THRESHOLD_USD = 25_000.0
+MAX_DAY_TRADES_PER_5D = 3
 
 # Promotion gate constants.
 PROMOTE_MIN_SHARPE_DELTA = 0.10

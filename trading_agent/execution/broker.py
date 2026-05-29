@@ -1,8 +1,13 @@
-"""Thin wrapper over Alpaca's crypto trading API.
+"""Thin wrappers over Alpaca's trading API (crypto and US equities).
 
 Paper mode by default. Set ``AGENT_LIVE_MODE=true`` to route orders to the
 real-money live endpoint. All guardrails in ``trading_agent.guardrails.risk``
 apply identically in both modes.
+
+``AlpacaCryptoBroker`` trades 24/7 with fractional quantities and GTC orders.
+``AlpacaStockBroker`` trades whole shares with DAY orders, respects market
+hours, and exposes Alpaca's rolling day-trade count so the PDT guardrail can
+fire.
 """
 from __future__ import annotations
 
@@ -23,8 +28,8 @@ class Fill:
     order_id: str
 
 
-class AlpacaCryptoBroker:
-    """Alpaca crypto broker. Paper by default; `AGENT_LIVE_MODE=true` selects live."""
+class _AlpacaBrokerBase:
+    """Shared client setup + account/position reads for both asset classes."""
 
     def __init__(self) -> None:
         from alpaca.trading.client import TradingClient
@@ -40,6 +45,28 @@ class AlpacaCryptoBroker:
                 "using real funds. Set AGENT_LIVE_MODE=false to revert to paper."
             )
         self._client = TradingClient(s.alpaca_key, s.alpaca_secret, paper=not s.live_mode)
+
+    def equity(self) -> float:
+        return float(self._client.get_account().equity)
+
+    def cash(self) -> float:
+        return float(self._client.get_account().cash)
+
+    def positions(self) -> dict[str, float]:
+        return {p.symbol: float(p.qty) for p in self._client.get_all_positions()}
+
+    def mark(self, symbol: str, px: float) -> None:
+        """No-op: Alpaca prices its own positions. Present for interface parity."""
+
+    def is_market_open(self) -> bool:  # overridden for stocks
+        return True
+
+    def daytrade_count(self) -> int:  # overridden for stocks
+        return 0
+
+
+class AlpacaCryptoBroker(_AlpacaBrokerBase):
+    """Alpaca crypto broker. 24/7, fractional qty, GTC market orders."""
 
     def submit_market(self, symbol: str, side: str, qty: float) -> Fill:
         from alpaca.trading.enums import OrderSide, TimeInForce
@@ -60,14 +87,42 @@ class AlpacaCryptoBroker:
             order_id=str(order.id),
         )
 
-    def equity(self) -> float:
-        return float(self._client.get_account().equity)
 
-    def cash(self) -> float:
-        return float(self._client.get_account().cash)
+class AlpacaStockBroker(_AlpacaBrokerBase):
+    """Alpaca US-equities broker. Whole shares, DAY orders, market-hours aware.
 
-    def positions(self) -> dict[str, float]:
-        return {p.symbol: float(p.qty) for p in self._client.get_all_positions()}
+    Equity market orders must use ``TimeInForce.DAY`` (GTC market orders are
+    rejected) and whole-share quantities unless fractional trading is enabled.
+    We floor to whole shares to stay safe across account types.
+    """
 
-    def mark(self, symbol: str, px: float) -> None:
-        """No-op: Alpaca prices its own positions. Present for interface parity with MockBroker."""
+    def submit_market(self, symbol: str, side: str, qty: float) -> Fill:
+        from alpaca.trading.enums import OrderSide, TimeInForce
+        from alpaca.trading.requests import MarketOrderRequest
+
+        whole = int(qty)  # floor to whole shares
+        if whole <= 0:
+            raise ValueError(
+                f"stock order qty {qty} floors to 0 shares; position too small to trade"
+            )
+        req = MarketOrderRequest(
+            symbol=symbol,
+            qty=whole,
+            side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
+            time_in_force=TimeInForce.DAY,
+        )
+        order = self._client.submit_order(req)
+        return Fill(
+            symbol=symbol,
+            side=side,
+            qty=float(order.qty),
+            avg_price=float(order.filled_avg_price or 0.0),
+            order_id=str(order.id),
+        )
+
+    def is_market_open(self) -> bool:
+        return bool(self._client.get_clock().is_open)
+
+    def daytrade_count(self) -> int:
+        """Alpaca's rolling 5-business-day day-trade count for the account."""
+        return int(getattr(self._client.get_account(), "daytrade_count", 0) or 0)
