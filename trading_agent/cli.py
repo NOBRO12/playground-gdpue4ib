@@ -120,6 +120,7 @@ def _improve(args: argparse.Namespace) -> int:
     s = config.load()
     champion = load_spec(s.strategies_dir / "champion.json")
 
+    n_trials = 1  # number of candidates considered; feeds the best-of-N penalty
     if args.fixture_proposal:
         challenger_raw = json.loads(Path(args.fixture_proposal).read_text())
         challenger_raw.setdefault("parent", champion.version)
@@ -146,6 +147,7 @@ def _improve(args: argparse.Namespace) -> int:
                 ).fetchall()
             summary["recent_guardrail_blocks"] = {r["kind"]: r["c"] for r in rows}
         n = max(1, getattr(args, "n_challengers", 1))
+        n_trials = n
         if n == 1:
             result = proposer.propose(champion, summary)
         else:
@@ -173,7 +175,16 @@ def _improve(args: argparse.Namespace) -> int:
         challenger.symbol,
         challenger.timeframe,
     )
-    decision = promoter.decide(champion, challenger, oos_bars)
+    # IS bars feed the walk-forward consistency check. A data shortage shouldn't
+    # block promotion, so fall back to None (consistency is then skipped).
+    try:
+        consistency_bars = data.load_window(s.is_dir, challenger.symbol, challenger.timeframe)
+    except Exception:
+        consistency_bars = None
+    decision = promoter.decide(
+        champion, challenger, oos_bars,
+        consistency_bars=consistency_bars, n_trials=n_trials,
+    )
 
     print(
         json.dumps(

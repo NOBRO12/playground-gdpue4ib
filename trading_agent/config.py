@@ -106,3 +106,14 @@ PROMOTE_MIN_ABS_SHARPE = 0.20
 # takes. Operators can raise PROMOTE_MIN_EXCESS_RETURN to demand a wider edge.
 PROMOTE_REQUIRE_POSITIVE_RETURN = True
 PROMOTE_MIN_EXCESS_RETURN = 0.0  # excess_return (alpha over buy-and-hold) floor
+
+# Overfitting haircut. A single OOS pass is easy to fit by luck, especially when
+# we pick the best of many challengers. Two defenses:
+#  1. Walk-forward consistency: the edge must show positive excess return in at
+#     least this fraction of rolling folds, not just the one held-out window.
+#  2. Best-of-N trials penalty: the max of N noisy Sharpe estimates is biased
+#     upward ~sqrt(2*ln N), so raise the required Sharpe delta as N grows. The
+#     penalty is 0 at N=1, preserving single-challenger behavior exactly.
+PROMOTE_CONSISTENCY_FOLDS = 4
+PROMOTE_MIN_POSITIVE_FOLD_FRAC = 0.6
+PROMOTE_TRIALS_PENALTY_COEF = 0.05

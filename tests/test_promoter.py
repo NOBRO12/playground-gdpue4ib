@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import math
+
+from trading_agent import config
 from trading_agent.evaluation.metrics import Scorecard
+from trading_agent.improvement import promoter
 from trading_agent.improvement.promoter import _gate
 
 
@@ -76,3 +80,71 @@ def test_promotes_when_beats_benchmark_and_sharpe():
     chal = _sc(0.9, -0.05, total_return=0.12, excess_return=0.06)
     accepted, reason = _gate(_sc(0.5, -0.05), chal)
     assert accepted and reason == "promoted"
+
+
+def test_trials_penalty_zero_at_one_and_grows_with_n():
+    from trading_agent import config
+
+    assert promoter.trials_penalty(1) == 0.0
+    assert promoter.trials_penalty(0) == 0.0
+    p5 = promoter.trials_penalty(5)
+    p20 = promoter.trials_penalty(20)
+    assert p5 > 0 and p20 > p5  # wider search -> higher bar
+    assert math.isclose(p5, config.PROMOTE_TRIALS_PENALTY_COEF * math.sqrt(2 * math.log(5)))
+
+
+def test_trials_penalty_raises_effective_delta_floor():
+    # A challenger that clears the base delta but not the penalized delta is
+    # rejected once we account for having searched many candidates.
+    champ = _sc(0.50, -0.05)
+    chal = _sc(0.65, -0.05)  # +0.15 delta: clears base 0.10
+    assert _gate(champ, chal)[0] is True
+    penalized = config.PROMOTE_MIN_SHARPE_DELTA + promoter.trials_penalty(50)
+    accepted, reason = _gate(champ, chal, sharpe_delta_floor=penalized)
+    assert not accepted and reason == "oos_sharpe_regression"
+
+
+def test_consistency_counts_positive_excess_folds(bars_trend, donchian_spec):
+    frac = promoter.consistency(donchian_spec, bars_trend)
+    assert frac is None or (0.0 <= frac <= 1.0)
+
+
+def test_consistency_none_when_too_few_bars(donchian_spec, bars_trend):
+    assert promoter.consistency(donchian_spec, bars_trend.iloc[:20]) is None
+
+
+def test_decide_rejects_inconsistent_oos(monkeypatch, bars_trend, donchian_spec):
+    import pandas as pd
+
+    good = _sc(0.9, -0.05)
+    monkeypatch.setattr(
+        promoter.backtester, "run",
+        lambda spec, bars, **k: promoter.backtester.BacktestResult(
+            equity=pd.Series([1.0, 1.1]), trades=pd.DataFrame(), score=good
+        ),
+    )
+    # Force the single-window gate to pass, then make walk-forward consistency fail.
+    monkeypatch.setattr(promoter, "_gate", lambda c, ch, sharpe_delta_floor=None: (True, "promoted"))
+    monkeypatch.setattr(promoter, "consistency", lambda spec, bars: 0.25)  # below 0.6
+    decision = promoter.decide(
+        donchian_spec, donchian_spec, bars_trend, consistency_bars=bars_trend
+    )
+    assert not decision.accepted and decision.reason == "inconsistent_oos"
+
+
+def test_decide_promotes_when_consistent(monkeypatch, bars_trend, donchian_spec):
+    import pandas as pd
+
+    good = _sc(0.9, -0.05)
+    monkeypatch.setattr(
+        promoter.backtester, "run",
+        lambda spec, bars, **k: promoter.backtester.BacktestResult(
+            equity=pd.Series([1.0, 1.1]), trades=pd.DataFrame(), score=good
+        ),
+    )
+    monkeypatch.setattr(promoter, "_gate", lambda c, ch, sharpe_delta_floor=None: (True, "promoted"))
+    monkeypatch.setattr(promoter, "consistency", lambda spec, bars: 0.75)  # above 0.6
+    decision = promoter.decide(
+        donchian_spec, donchian_spec, bars_trend, consistency_bars=bars_trend
+    )
+    assert decision.accepted and decision.reason == "promoted"
