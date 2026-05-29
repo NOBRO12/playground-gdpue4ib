@@ -115,7 +115,17 @@ def run(
 
     equity = pd.Series(dict(equity_pts), name="equity").sort_index()
     trades_df = pd.DataFrame(trades)
-    score = metrics.score(equity, trades_df, PERIODS_PER_YEAR[spec.timeframe])
+    # Buy-and-hold of the same instrument/window — the benchmark every strategy
+    # must beat to justify the risk it takes.
+    closes = bars["close"]
+    benchmark_return = (
+        float(closes.iloc[-1] / closes.iloc[0] - 1.0)
+        if len(closes) >= 2 and closes.iloc[0] > 0
+        else 0.0
+    )
+    score = metrics.score(
+        equity, trades_df, PERIODS_PER_YEAR[spec.timeframe], benchmark_return
+    )
     return BacktestResult(equity=equity, trades=trades_df, score=score)
 
 

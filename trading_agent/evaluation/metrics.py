@@ -16,6 +16,11 @@ class Scorecard:
     win_rate: float
     expectancy_r: float
     equity_final: float
+    # Return-based metrics (defaults keep positional/legacy construction valid).
+    total_return: float = 0.0  # equity end/start - 1 over the scored window
+    cagr: float = 0.0  # annualized total return
+    benchmark_return: float = 0.0  # buy-and-hold of the same instrument/window
+    excess_return: float = 0.0  # total_return - benchmark_return (the alpha)
 
 
 def sharpe(returns: pd.Series, periods_per_year: int = 365 * 24) -> float:
@@ -43,7 +48,29 @@ def max_drawdown(equity: pd.Series) -> float:
     return float(dd.min())
 
 
-def score(equity: pd.Series, trades: pd.DataFrame, periods_per_year: int) -> Scorecard:
+def total_return(equity: pd.Series) -> float:
+    if len(equity) < 2 or equity.iloc[0] <= 0:
+        return 0.0
+    return float(equity.iloc[-1] / equity.iloc[0] - 1.0)
+
+
+def cagr(equity: pd.Series, periods_per_year: int) -> float:
+    """Annualized compound return over the equity curve's span."""
+    n = len(equity) - 1  # number of return periods
+    if n <= 0 or equity.iloc[0] <= 0:
+        return 0.0
+    end = float(equity.iloc[-1])
+    if end <= 0:
+        return -1.0  # total loss
+    return float((end / equity.iloc[0]) ** (periods_per_year / n) - 1.0)
+
+
+def score(
+    equity: pd.Series,
+    trades: pd.DataFrame,
+    periods_per_year: int,
+    benchmark_return: float | None = None,
+) -> Scorecard:
     returns = equity.pct_change().dropna()
     if len(trades):
         wins = trades[trades["pnl_r"] > 0]
@@ -52,6 +79,8 @@ def score(equity: pd.Series, trades: pd.DataFrame, periods_per_year: int) -> Sco
     else:
         win_rate = 0.0
         expectancy_r = 0.0
+    tot = total_return(equity)
+    bench = float(benchmark_return) if benchmark_return is not None else 0.0
     return Scorecard(
         sharpe=sharpe(returns, periods_per_year),
         sortino=sortino(returns, periods_per_year),
@@ -60,4 +89,8 @@ def score(equity: pd.Series, trades: pd.DataFrame, periods_per_year: int) -> Sco
         win_rate=win_rate,
         expectancy_r=expectancy_r,
         equity_final=float(equity.iloc[-1]) if len(equity) else 0.0,
+        total_return=tot,
+        cagr=cagr(equity, periods_per_year),
+        benchmark_return=bench,
+        excess_return=tot - bench,
     )
