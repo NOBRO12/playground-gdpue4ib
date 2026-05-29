@@ -24,9 +24,17 @@ symbol/timeframe — work with whatever it is. You are given the current champio
 spec and an in-sample summary: risk-adjusted metrics, drawdown depth/duration,
 longest losing streak, per-regime expectancy and win-rate, and recent live
 guardrail blocks. Propose ONE challenger spec that may improve risk-adjusted
-returns. Stay strictly within the schema. Only change parameters/filters/risk;
-keep type and symbol unchanged unless clearly warranted. Bias toward small,
-defensible changes."""
+returns. Stay strictly within the schema.
+
+Three strategy families are available: trend-following 'donchian' and
+'ema_cross', and counter-trend 'mean_reversion' (buys dips stretched below a
+rolling mean — suited to range-bound regimes). Usually change only
+parameters/filters/risk and keep type/symbol fixed. Switching 'type' is
+warranted only when the per-regime breakdown shows the champion's edge is
+concentrated in one regime and decays in another (e.g. a trend strategy that
+only earns in trending regimes and bleeds in ranging ones) — then a
+counter-trend challenger is a defensible bet. Bias toward small, defensible
+changes."""
 
 
 @dataclass(frozen=True)

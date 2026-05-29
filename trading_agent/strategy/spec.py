@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # proposer can't emit arbitrary/illiquid symbols, but isn't locked to crypto.
 SYMBOL_PATTERN = r"^([A-Z]{1,5}|[A-Z]{2,5}/USD)$"
 Timeframe = Literal["1h", "4h", "1d"]
-StrategyType = Literal["donchian", "ema_cross"]
+StrategyType = Literal["donchian", "ema_cross", "mean_reversion"]
 
 
 class DonchianParams(BaseModel):
@@ -27,6 +27,24 @@ class EmaCrossParams(BaseModel):
     def _fast_lt_slow(self) -> "EmaCrossParams":
         if self.fast >= self.slow:
             raise ValueError("fast must be < slow")
+        return self
+
+
+class MeanReversionParams(BaseModel):
+    """Bollinger-style mean reversion: buy stretched-below-mean dips, exit on
+    reversion back toward the mean. Orthogonal to the trend-following templates
+    (donchian/ema_cross) so the proposer has range-bound edge to explore."""
+
+    lookback: int = Field(ge=5, le=200)  # SMA / std-dev window
+    entry_z: float = Field(ge=0.5, le=4.0)  # std-devs below mean to enter long
+    exit_z: float = Field(ge=-2.0, le=2.0)  # z-level to exit (0 = revert to mean)
+
+    @model_validator(mode="after")
+    def _exit_above_entry(self) -> "MeanReversionParams":
+        # Exit must sit above the entry trigger (-entry_z), else we'd exit lower
+        # than we entered and never capture the reversion.
+        if self.exit_z <= -self.entry_z:
+            raise ValueError("exit_z must be greater than -entry_z")
         return self
 
 
@@ -68,6 +86,8 @@ class StrategySpec(BaseModel):
             DonchianParams.model_validate(self.params)
         elif self.type == "ema_cross":
             EmaCrossParams.model_validate(self.params)
+        elif self.type == "mean_reversion":
+            MeanReversionParams.model_validate(self.params)
         return self
 
     def to_json(self) -> str:

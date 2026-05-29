@@ -62,3 +62,19 @@ def ema_spec() -> StrategySpec:
             "parent": None,
         }
     )
+
+
+@pytest.fixture
+def mean_reversion_spec() -> StrategySpec:
+    return StrategySpec.model_validate(
+        {
+            "type": "mean_reversion",
+            "symbol": "BTC/USD",
+            "timeframe": "1h",
+            "params": {"lookback": 20, "entry_z": 2.0, "exit_z": 0.0},
+            "filters": {},
+            "risk": {"atr_mult_stop": 2.0, "take_profit_r": 3.0, "position_pct": 0.10},
+            "version": "v-test-mr",
+            "parent": None,
+        }
+    )

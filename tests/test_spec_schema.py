@@ -63,3 +63,32 @@ def test_donchian_params_required_for_donchian_type():
     raw = _base() | {"params": {"fast": 5, "slow": 20}}  # ema params on donchian
     with pytest.raises(ValidationError):
         StrategySpec.model_validate(raw)
+
+
+def test_valid_mean_reversion():
+    raw = _base() | {
+        "type": "mean_reversion",
+        "params": {"lookback": 20, "entry_z": 2.0, "exit_z": 0.0},
+    }
+    spec = StrategySpec.model_validate(raw)
+    assert spec.type == "mean_reversion"
+    assert spec.params["entry_z"] == 2.0
+
+
+def test_mean_reversion_exit_must_be_above_entry():
+    # exit_z <= -entry_z would exit below entry and never capture reversion.
+    raw = _base() | {
+        "type": "mean_reversion",
+        "params": {"lookback": 20, "entry_z": 2.0, "exit_z": -2.0},
+    }
+    with pytest.raises(ValidationError):
+        StrategySpec.model_validate(raw)
+
+
+def test_mean_reversion_type_in_tool_schema():
+    # The Claude tool input_schema must expose the new family so the proposer
+    # can actually emit it.
+    from trading_agent.strategy.spec import claude_tool_input_schema
+
+    dumped = str(claude_tool_input_schema())
+    assert "mean_reversion" in dumped

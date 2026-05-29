@@ -7,11 +7,13 @@ from pathlib import Path
 from .base import Strategy
 from .donchian import DonchianStrategy
 from .ema_cross import EmaCrossStrategy
+from .mean_reversion import MeanReversionStrategy
 from .spec import StrategySpec
 
 _REGISTRY: dict[str, type[Strategy]] = {
     "donchian": DonchianStrategy,
     "ema_cross": EmaCrossStrategy,
+    "mean_reversion": MeanReversionStrategy,
 }
 
 
