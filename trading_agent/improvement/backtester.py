@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from ..evaluation import metrics, regime
+from ..execution import exits
 from ..strategy.base import Strategy
 from ..strategy.registry import from_spec
 from ..strategy.spec import StrategySpec
@@ -59,17 +60,10 @@ def run(
 
         # Open positions: check stop or take-profit first (intrabar conservative).
         if in_pos:
-            exit_px: float | None = None
-            exit_reason = ""
             low = float(row["low"])
             high = float(row["high"])
-            if not np.isnan(stop_px) and low <= stop_px:
-                exit_px = stop_px
-                exit_reason = "stop"
-            elif not np.isnan(take_px) and high >= take_px:
-                exit_px = take_px
-                exit_reason = "take_profit"
-            elif bool(sig.at[ts, "exit"]):
+            exit_reason, exit_px = exits.exit_for_levels(low, high, stop_px, take_px)
+            if exit_px is None and bool(sig.at[ts, "exit"]):
                 exit_px = price
                 exit_reason = "signal_exit"
 

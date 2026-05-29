@@ -31,6 +31,11 @@ class Fill:
 class _AlpacaBrokerBase:
     """Shared client setup + account/position reads for both asset classes."""
 
+    # Whether the venue accepts resting stop/take-profit (bracket) orders that
+    # fire between ticks. Stocks: yes. Crypto/Mock: no (the live loop simulates
+    # the stop at tick cadence instead, matching the backtester).
+    supports_resting_orders = False
+
     def __init__(self) -> None:
         from alpaca.trading.client import TradingClient
 
@@ -64,6 +69,9 @@ class _AlpacaBrokerBase:
     def daytrade_count(self) -> int:  # overridden for stocks
         return 0
 
+    def cancel_open_orders(self, symbol: str) -> None:
+        """Cancel resting orders for a symbol. No-op when unsupported."""
+
 
 class AlpacaCryptoBroker(_AlpacaBrokerBase):
     """Alpaca crypto broker. 24/7, fractional qty, GTC market orders."""
@@ -95,6 +103,57 @@ class AlpacaStockBroker(_AlpacaBrokerBase):
     rejected) and whole-share quantities unless fractional trading is enabled.
     We floor to whole shares to stay safe across account types.
     """
+
+    supports_resting_orders = True
+
+    def submit_bracket(
+        self, symbol: str, side: str, qty: float, stop_px: float, take_px: float
+    ) -> Fill:
+        """Market entry with resting stop-loss + take-profit (OCO) legs.
+
+        The stop and take-profit rest on the exchange and fire intraday between
+        ticks — essential for a once-per-day scheduler, and what makes live
+        match the backtester (which assumes intrabar stop/take fills).
+        GTC so the legs persist across days for a swing strategy. (Bracket TIF
+        is validated live via `paper --once`.)
+        """
+        from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+        from alpaca.trading.requests import (
+            MarketOrderRequest,
+            StopLossRequest,
+            TakeProfitRequest,
+        )
+
+        whole = int(qty)
+        if whole <= 0:
+            raise ValueError(
+                f"stock order qty {qty} floors to 0 shares; position too small to trade"
+            )
+        req = MarketOrderRequest(
+            symbol=symbol,
+            qty=whole,
+            side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
+            time_in_force=TimeInForce.GTC,
+            order_class=OrderClass.BRACKET,
+            take_profit=TakeProfitRequest(limit_price=round(take_px, 2)),
+            stop_loss=StopLossRequest(stop_price=round(stop_px, 2)),
+        )
+        order = self._client.submit_order(req)
+        return Fill(
+            symbol=symbol,
+            side=side,
+            qty=float(order.qty),
+            avg_price=float(order.filled_avg_price or 0.0),
+            order_id=str(order.id),
+        )
+
+    def cancel_open_orders(self, symbol: str) -> None:
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        req = GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[symbol])
+        for o in self._client.get_orders(filter=req):
+            self._client.cancel_order_by_id(o.id)
 
     def submit_market(self, symbol: str, side: str, qty: float) -> Fill:
         from alpaca.trading.enums import OrderSide, TimeInForce

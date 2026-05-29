@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,7 +23,7 @@ from pathlib import Path
 from . import config
 from .evaluation import db, logger as evlogger
 from .evaluation import regime as regime_mod
-from .execution import data
+from .execution import data, exits
 from .execution.state import LiveState
 from .improvement import backtester, promoter, versioning
 from .strategy.registry import load_spec
@@ -345,6 +346,47 @@ def _paper(args: argparse.Namespace) -> int:
 
         regime_label = str(regime_mod.classify(bars).iloc[-1])
 
+        # A resting stop/take (exchange-managed) fired between ticks: we tracked
+        # an open position but the broker now shows flat. Record the exit.
+        if broker.supports_resting_orders and state.open_entry_px > 0 and held_qty == 0:
+            with db.session(s.db_path) as conn:
+                evlogger.close_open_trade(
+                    conn,
+                    symbol=champion.symbol,
+                    version=champion.version,
+                    exit_ts=last_ts.isoformat(),
+                    exit_px=last_close,
+                    reason_exit="resting_stop_or_take",
+                )
+            log.info("resting stop/take fired for %s; position flat", champion.symbol)
+            state.clear_open()
+            state.save(s.live_state_path)
+            return
+
+        # Venues without resting orders (crypto/mock): simulate the stop/take at
+        # tick cadence using the SAME decision as the backtester.
+        if (not broker.supports_resting_orders) and held_qty > 0 and state.open_entry_px > 0:
+            low = float(bars["low"].iloc[-1])
+            high = float(bars["high"].iloc[-1])
+            reason_exit, exit_px = exits.exit_for_levels(
+                low, high, state.open_stop_px or float("nan"), state.open_take_px or float("nan")
+            )
+            if exit_px is not None:
+                fill = broker.submit_market(champion.symbol, "sell", held_qty)
+                with db.session(s.db_path) as conn:
+                    evlogger.close_open_trade(
+                        conn,
+                        symbol=champion.symbol,
+                        version=champion.version,
+                        exit_ts=last_ts.isoformat(),
+                        exit_px=exit_px,
+                        reason_exit=reason_exit,
+                    )
+                log.info("%s exit %s qty=%s px=%s", reason_exit, fill.symbol, fill.qty, exit_px)
+                state.clear_open()
+                state.save(s.live_state_path)
+                return
+
         if bool(sig.at[last_ts, "entry"]) and held_qty == 0:
             notional = eq * champion.risk.position_pct
             qty = round(notional / last_close, 6)
@@ -367,7 +409,23 @@ def _paper(args: argparse.Namespace) -> int:
                 log.warning("guardrail blocked entry: %s", decision.reason)
                 state.save(s.live_state_path)
                 return
-            fill = broker.submit_market(champion.symbol, "buy", qty)
+            # Match the backtester's entry guard: no trade without a valid stop.
+            stop_px = float(sig.at[last_ts, "stop_px"])
+            if math.isnan(stop_px) or stop_px >= last_close:
+                log.info("skip entry: no valid stop (stop_px=%s price=%s)", stop_px, last_close)
+                state.save(s.live_state_path)
+                return
+            if broker.supports_resting_orders:
+                take_px = exits.take_from_stop(last_close, stop_px, champion.risk.take_profit_r)
+                fill = broker.submit_bracket(champion.symbol, "buy", qty, stop_px, take_px)
+            else:
+                fill = broker.submit_market(champion.symbol, "buy", qty)
+                take_px = exits.take_from_stop(
+                    fill.avg_price, stop_px, champion.risk.take_profit_r
+                )
+            state.open_entry_px = fill.avg_price
+            state.open_stop_px = stop_px
+            state.open_take_px = take_px
             state.trades_today += 1
             with db.session(s.db_path) as conn:
                 evlogger.log_trade(
@@ -404,6 +462,7 @@ def _paper(args: argparse.Namespace) -> int:
                 log.warning("guardrail blocked exit: %s", decision.reason)
                 state.save(s.live_state_path)
                 return
+            broker.cancel_open_orders(champion.symbol)  # clear resting bracket legs first
             fill = broker.submit_market(champion.symbol, "sell", held_qty)
             with db.session(s.db_path) as conn:
                 evlogger.close_open_trade(
@@ -414,6 +473,7 @@ def _paper(args: argparse.Namespace) -> int:
                     exit_px=fill.avg_price,
                     reason_exit="signal_exit",
                 )
+            state.clear_open()
             log.info("exited %s qty=%s px=%s", fill.symbol, fill.qty, fill.avg_price)
 
         state.save(s.live_state_path)

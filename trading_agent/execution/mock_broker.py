@@ -68,6 +68,10 @@ class MockBroker:
     def positions(self) -> dict[str, float]:
         return {s: p["qty"] for s, p in self._positions.items() if p["qty"] > 0}
 
+    # No exchange to rest orders on; the live loop simulates stop/take at tick
+    # cadence (matching the backtester) when this is False.
+    supports_resting_orders = False
+
     def is_market_open(self) -> bool:
         """Always open offline — interface parity with the Alpaca brokers."""
         return True
@@ -75,6 +79,9 @@ class MockBroker:
     def daytrade_count(self) -> int:
         """No PDT tracking offline — interface parity with the Alpaca brokers."""
         return 0
+
+    def cancel_open_orders(self, symbol: str) -> None:
+        """No resting orders offline — no-op for interface parity."""
 
     def submit_market(self, symbol: str, side: str, qty: float) -> Fill:
         if symbol not in self._marks:

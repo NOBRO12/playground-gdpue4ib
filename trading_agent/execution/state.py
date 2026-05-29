@@ -18,6 +18,17 @@ class LiveState:
     day_start_date: str = ""
     trades_today: int = 0
     kill_switch_tripped: bool = False
+    # Open-position exit levels (0.0 = flat / not set). Persisted so resting
+    # stop/take orders can be reconciled and the live loop's exit decision
+    # matches the backtester.
+    open_entry_px: float = 0.0
+    open_stop_px: float = 0.0
+    open_take_px: float = 0.0
+
+    def clear_open(self) -> None:
+        self.open_entry_px = 0.0
+        self.open_stop_px = 0.0
+        self.open_take_px = 0.0
 
     @classmethod
     def load(cls, path: str | Path) -> "LiveState":
