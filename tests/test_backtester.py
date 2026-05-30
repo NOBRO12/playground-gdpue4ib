@@ -43,3 +43,40 @@ def test_walk_forward_runs(bars_trend, donchian_spec):
 def test_ema_strategy_runs(bars_trend, ema_spec):
     res = backtester.run(ema_spec, bars_trend)
     assert res.equity.iloc[-1] > 0
+
+
+def _kelly_spec(donchian_spec):
+    raw = donchian_spec.model_dump()
+    raw["risk"]["kelly_fraction"] = 0.5
+    raw["version"] = "v-kelly"
+    from trading_agent.strategy.spec import StrategySpec
+
+    return StrategySpec.model_validate(raw)
+
+
+def test_kelly_curve_is_opt_in(bars_trend, donchian_spec):
+    kspec = _kelly_spec(donchian_spec)
+    # Default: never computed, even when the spec sets kelly_fraction.
+    assert backtester.run(kspec, bars_trend).kelly_equity is None
+    # Opt-in: present and well-formed.
+    res = backtester.run(kspec, bars_trend, kelly_curve=True)
+    assert res.kelly_equity is not None
+    assert len(res.kelly_equity) == len(res.equity)
+    assert res.kelly_equity.iloc[-1] > 0
+
+
+def test_kelly_fraction_does_not_change_the_gate_score(bars_trend, donchian_spec):
+    # Adding Kelly sizing must not move Sharpe/DD/return — the gate is computed on
+    # the unsized base curve regardless of kelly_fraction or kelly_curve.
+    base = backtester.run(donchian_spec, bars_trend).score
+    kspec = _kelly_spec(donchian_spec)
+    with_kelly = backtester.run(kspec, bars_trend, kelly_curve=True).score
+    assert with_kelly.sharpe == base.sharpe
+    assert with_kelly.max_dd == base.max_dd
+    assert with_kelly.equity_final == base.equity_final
+    assert with_kelly.total_return == base.total_return
+
+
+def test_no_kelly_curve_when_fraction_unset(bars_trend, donchian_spec):
+    # kelly_curve=True but the spec has no kelly_fraction -> still None.
+    assert backtester.run(donchian_spec, bars_trend, kelly_curve=True).kelly_equity is None

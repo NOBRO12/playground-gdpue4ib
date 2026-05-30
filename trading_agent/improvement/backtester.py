@@ -26,26 +26,34 @@ class BacktestResult:
     equity: pd.Series
     trades: pd.DataFrame
     score: metrics.Scorecard
+    # Optional sizing-aware replay: dollar equity under the spec's fractional-Kelly
+    # logic (running realized edge + KELLY_MIN_TRADES gate + cap). None unless
+    # explicitly requested via run(kelly_curve=True). NOT a gate input — the score
+    # above is always computed on the unsized base curve.
+    kelly_equity: pd.Series | None = None
 
 
-def run(
+def _simulate(
     spec: StrategySpec,
     bars: pd.DataFrame,
-    starting_equity: float = 100_000.0,
-    fee_bps: float = config.BACKTEST_FEE_BPS,
-    slippage_bps: float = config.BACKTEST_SLIPPAGE_BPS,
-) -> BacktestResult:
-    strat: Strategy = from_spec(spec)
-    sig = strat.signals(bars)
-    regime_at = regime.classify(bars).to_dict()
-
-    cost = (fee_bps + slippage_bps) / 1e4
+    sig: pd.DataFrame,
+    regime_at: dict,
+    starting_equity: float,
+    cost: float,
+    *,
+    apply_kelly: bool,
+) -> tuple[pd.Series, pd.DataFrame]:
+    """Core trade replay. Entry/exit timing depends only on price/signals, so the
+    base and Kelly passes trade the same sequence — only the position size (and
+    thus dollar P&L) differs. Returns (equity_curve, trades)."""
     pos_pct = spec.risk.position_pct
     tp_r = spec.risk.take_profit_r
+    kelly_fraction = spec.risk.kelly_fraction if apply_kelly else None
 
     cash = starting_equity
     equity_pts: list[tuple[pd.Timestamp, float]] = []
     trades: list[dict] = []
+    closed_pnls: list[float] = []  # accrues realized P&L for the running Kelly edge
 
     in_pos = False
     qty = 0.0
@@ -73,6 +81,7 @@ def run(
                 pnl_usd = (net_exit - entry_px) * qty
                 pnl_r = (net_exit - entry_px) / risk_per_unit if risk_per_unit > 0 else 0.0
                 cash += qty * net_exit
+                closed_pnls.append(pnl_usd)
                 trades.append(
                     {
                         "entry_ts": entry_ts.isoformat() if entry_ts else "",
@@ -98,9 +107,20 @@ def run(
             if np.isnan(stop_candidate) or stop_candidate >= price:
                 continue
             risk_per_unit = price - stop_candidate
-            qty = sizing.size_position(
-                cash, price, risk_per_unit, pos_pct, spec.risk.risk_per_trade_pct
-            )
+            if kelly_fraction:
+                # Mirror live: size off the realized edge so far, only once enough
+                # trades have closed; below that, fixed/risk-targeted fallback.
+                n_closed, k_win, k_payoff = sizing.edge_from_pnls(closed_pnls)
+                if n_closed < config.KELLY_MIN_TRADES:
+                    k_win = k_payoff = None
+                qty = sizing.size_position(
+                    cash, price, risk_per_unit, pos_pct, spec.risk.risk_per_trade_pct,
+                    kelly_fraction=kelly_fraction, win_rate=k_win, payoff_ratio=k_payoff,
+                )
+            else:
+                qty = sizing.size_position(
+                    cash, price, risk_per_unit, pos_pct, spec.risk.risk_per_trade_pct
+                )
             if qty <= 0:
                 continue
             entry_px = price * (1 + cost)
@@ -115,7 +135,26 @@ def run(
         equity_pts.append((ts, cash + mark))
 
     equity = pd.Series(dict(equity_pts), name="equity").sort_index()
-    trades_df = pd.DataFrame(trades)
+    return equity, pd.DataFrame(trades)
+
+
+def run(
+    spec: StrategySpec,
+    bars: pd.DataFrame,
+    starting_equity: float = 100_000.0,
+    fee_bps: float = config.BACKTEST_FEE_BPS,
+    slippage_bps: float = config.BACKTEST_SLIPPAGE_BPS,
+    kelly_curve: bool = False,
+) -> BacktestResult:
+    strat: Strategy = from_spec(spec)
+    sig = strat.signals(bars)
+    regime_at = regime.classify(bars).to_dict()
+    cost = (fee_bps + slippage_bps) / 1e4
+
+    # Base (unsized-by-Kelly) curve — the ONLY input to the risk-adjusted gate.
+    equity, trades_df = _simulate(
+        spec, bars, sig, regime_at, starting_equity, cost, apply_kelly=False
+    )
     # Buy-and-hold of the same instrument/window — the benchmark every strategy
     # must beat to justify the risk it takes.
     closes = bars["close"]
@@ -127,7 +166,18 @@ def run(
     score = metrics.score(
         equity, trades_df, PERIODS_PER_YEAR[spec.timeframe], benchmark_return
     )
-    return BacktestResult(equity=equity, trades=trades_df, score=score)
+
+    # Optional, opt-in only: the dollar curve under live Kelly sizing. The gate
+    # never pays for this, keeping sizing orthogonal to edge quality.
+    kelly_equity = None
+    if kelly_curve and spec.risk.kelly_fraction:
+        kelly_equity, _ = _simulate(
+            spec, bars, sig, regime_at, starting_equity, cost, apply_kelly=True
+        )
+
+    return BacktestResult(
+        equity=equity, trades=trades_df, score=score, kelly_equity=kelly_equity
+    )
 
 
 def walk_forward(

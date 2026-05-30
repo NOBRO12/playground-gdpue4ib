@@ -92,8 +92,18 @@ def _backtest(args: argparse.Namespace) -> int:
     if args.window:
         start, end = args.window.split(":")
         bars = bars.loc[start:end]
-    result = backtester.run(spec, bars)
-    print(json.dumps(result.score.__dict__, indent=2))
+    result = backtester.run(spec, bars, kelly_curve=True)
+    out = dict(result.score.__dict__)
+    if result.kelly_equity is not None and len(result.kelly_equity) >= 2:
+        ke = result.kelly_equity
+        out["kelly_sizing"] = {
+            "kelly_final_equity": float(ke.iloc[-1]),
+            "kelly_total_return": float(ke.iloc[-1] / ke.iloc[0] - 1.0)
+            if ke.iloc[0] > 0 else 0.0,
+            "base_final_equity": result.score.equity_final,
+            "note": "sizing-only replay; the gate uses the unsized curve above",
+        }
+    print(json.dumps(out, indent=2))
     with db.session(s.db_path) as conn:
         conn.execute(
             """
