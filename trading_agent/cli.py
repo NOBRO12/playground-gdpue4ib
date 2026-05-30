@@ -254,6 +254,39 @@ def _realized_edge(
     return sizing.edge_from_pnls(pnls)
 
 
+def _latency_ms(submitted_at: str, filled_at: str) -> float | None:
+    if not submitted_at or not filled_at:
+        return None
+    try:
+        a = datetime.fromisoformat(submitted_at)
+        b = datetime.fromisoformat(filled_at)
+    except ValueError:
+        return None
+    return (b - a).total_seconds() * 1000.0
+
+
+def _record_execution(
+    conn, *, version, symbol, side, order_type, intended_px, fill, client_order_id=None
+) -> None:
+    """Persist one order's realized execution quality for reconciliation."""
+    evlogger.log_execution(
+        conn,
+        version=version,
+        symbol=symbol,
+        side=side,
+        order_type=order_type,
+        intended_px=float(intended_px),
+        fill_px=float(fill.avg_price),
+        intended_qty=float(fill.submitted_qty or fill.qty),
+        filled_qty=float(fill.filled_qty or fill.qty),
+        commission_usd=float(fill.commission),
+        latency_ms=_latency_ms(fill.submitted_at, fill.filled_at),
+        client_order_id=client_order_id,
+        order_id=fill.order_id,
+        status=fill.status,
+    )
+
+
 def _status(args: argparse.Namespace) -> int:
     s = config.load()
     champion = load_spec(s.strategies_dir / "champion.json")
@@ -490,15 +523,33 @@ def _paper(args: argparse.Namespace) -> int:
         # A resting stop/take (exchange-managed) fired between ticks: we tracked
         # an open position but the broker now shows flat. Record the exit.
         if broker.supports_resting_orders and state.open_entry_px > 0 and held_qty == 0:
+            # Recover the exact exchange-managed leg fill so the exit price and its
+            # slippage are real, not estimated from the bar close.
+            leg = broker.last_exit_fill(champion.symbol)
+            exit_px = leg.avg_price if leg and leg.avg_price > 0 else last_close
+            # Intended = the resting level the fill is closest to (stop vs take).
+            intended_px = exit_px
+            if leg and state.open_stop_px and state.open_take_px:
+                intended_px = (
+                    state.open_stop_px
+                    if abs(exit_px - state.open_stop_px) <= abs(exit_px - state.open_take_px)
+                    else state.open_take_px
+                )
             with db.session(s.db_path) as conn:
                 evlogger.close_open_trade(
                     conn,
                     symbol=champion.symbol,
                     version=champion.version,
                     exit_ts=last_ts.isoformat(),
-                    exit_px=last_close,
+                    exit_px=exit_px,
                     reason_exit="resting_stop_or_take",
                 )
+                if leg:
+                    _record_execution(
+                        conn, version=champion.version, symbol=champion.symbol,
+                        side="sell", order_type="resting_leg",
+                        intended_px=intended_px, fill=leg,
+                    )
             log.info("resting stop/take fired for %s; position flat", champion.symbol)
             notify("exit", {"symbol": champion.symbol, "reason": "resting_stop_or_take"}, s)
             state.clear_open()
@@ -526,6 +577,11 @@ def _paper(args: argparse.Namespace) -> int:
                         exit_ts=last_ts.isoformat(),
                         exit_px=exit_px,
                         reason_exit=reason_exit,
+                    )
+                    _record_execution(
+                        conn, version=champion.version, symbol=champion.symbol,
+                        side="sell", order_type="market",
+                        intended_px=exit_px, fill=fill, client_order_id=coid,
                     )
                 log.info("%s exit %s qty=%s px=%s", reason_exit, fill.symbol, fill.qty, exit_px)
                 notify("exit", {"symbol": champion.symbol, "reason": reason_exit, "px": exit_px}, s)
@@ -616,6 +672,12 @@ def _paper(args: argparse.Namespace) -> int:
                     regime=regime_label,
                     meta={"order_id": fill.order_id},
                 )
+                _record_execution(
+                    conn, version=champion.version, symbol=champion.symbol,
+                    side="buy",
+                    order_type="bracket" if broker.supports_resting_orders else "market",
+                    intended_px=last_close, fill=fill, client_order_id=coid,
+                )
             log.info("filled %s qty=%s px=%s", fill.symbol, fill.qty, fill.avg_price)
             notify(
                 "entry_fill",
@@ -657,6 +719,11 @@ def _paper(args: argparse.Namespace) -> int:
                     exit_ts=last_ts.isoformat(),
                     exit_px=fill.avg_price,
                     reason_exit="signal_exit",
+                )
+                _record_execution(
+                    conn, version=champion.version, symbol=champion.symbol,
+                    side="sell", order_type="market",
+                    intended_px=last_close, fill=fill, client_order_id=coid,
                 )
             state.clear_open()
             log.info("exited %s qty=%s px=%s", fill.symbol, fill.qty, fill.avg_price)
