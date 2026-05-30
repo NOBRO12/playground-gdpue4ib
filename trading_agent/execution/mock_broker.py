@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .broker import Fill
@@ -130,6 +131,9 @@ class MockBroker:
             raise ValueError(f"unknown side: {side!r}")
 
         self._save()
+        now = datetime.now(timezone.utc).isoformat()
         return Fill(
-            symbol=symbol, side=side, qty=qty, avg_price=fill_px, order_id=str(uuid.uuid4())
+            symbol=symbol, side=side, qty=qty, avg_price=fill_px, order_id=str(uuid.uuid4()),
+            submitted_qty=qty, filled_qty=qty, commission=0.0,
+            submitted_at=now, filled_at=now, status="filled",
         )

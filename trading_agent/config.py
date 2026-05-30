@@ -131,3 +131,8 @@ BACKTEST_SLIPPAGE_BPS = 5.0
 # falls back to the conservative fixed/risk-targeted path — never scale up on a
 # handful of lucky fills.
 KELLY_MIN_TRADES = 20
+
+# How long to poll an Alpaca order for a terminal fill before recording whatever
+# (possibly partial) state it reached. Lets execution logging capture the real
+# fill price/qty/latency instead of the empty just-submitted order.
+ORDER_FILL_TIMEOUT_S = 10.0

@@ -26,6 +26,23 @@ class Fill:
     qty: float
     avg_price: float
     order_id: str
+    # Execution-quality detail (defaults preserve back-compat for callers/tests
+    # that build a Fill positionally). Populated by the Alpaca brokers after the
+    # order reaches a terminal state and by the MockBroker synchronously.
+    submitted_qty: float = 0.0
+    filled_qty: float = 0.0
+    commission: float = 0.0
+    submitted_at: str = ""
+    filled_at: str = ""
+    status: str = ""
+
+
+def _iso(value: object) -> str:
+    """Best-effort ISO string for an Alpaca timestamp (datetime or str or None)."""
+    if value is None:
+        return ""
+    iso = getattr(value, "isoformat", None)
+    return iso() if callable(iso) else str(value)
 
 
 def make_client_order_id(symbol: str, side: str, ts_iso: str) -> str:
@@ -79,6 +96,11 @@ class _AlpacaBrokerBase:
     def cancel_open_orders(self, symbol: str) -> None:
         """Cancel resting orders for a symbol. No-op when unsupported."""
 
+    def last_exit_fill(self, symbol: str) -> Fill | None:
+        """Most recent filled SELL for ``symbol`` (an exchange-managed resting
+        stop/take leg). None unless the venue rests orders (overridden)."""
+        return None
+
 
 class AlpacaCryptoBroker(_AlpacaBrokerBase):
     """Alpaca crypto broker. 24/7, fractional qty, GTC market orders."""
@@ -97,12 +119,16 @@ class AlpacaCryptoBroker(_AlpacaBrokerBase):
             client_order_id=client_order_id,
         )
         order = self._client.submit_order(req)
+        filled_qty = float(getattr(order, "filled_qty", 0) or order.qty)
         return Fill(
             symbol=symbol,
             side=side,
             qty=float(order.qty),
             avg_price=float(order.filled_avg_price or 0.0),
             order_id=str(order.id),
+            submitted_qty=float(order.qty),
+            filled_qty=filled_qty,
+            status=str(getattr(order, "status", "")),
         )
 
 
@@ -115,6 +141,59 @@ class AlpacaStockBroker(_AlpacaBrokerBase):
     """
 
     supports_resting_orders = True
+    _poll_interval_s = 0.5  # overridden to 0 in tests to avoid real sleeps
+
+    def _fill_from_order(self, order, symbol: str, side: str) -> Fill:
+        """Build a Fill from a (terminal) Alpaca order, capturing fill price,
+        partial quantity, commission, latency, and status."""
+        submitted_qty = float(getattr(order, "qty", 0) or 0)
+        filled_qty = float(getattr(order, "filled_qty", 0) or 0)
+        avg_price = float(getattr(order, "filled_avg_price", None) or 0.0)
+        commission = float(getattr(order, "commission", 0) or 0)
+        return Fill(
+            symbol=symbol,
+            side=side,
+            qty=filled_qty or submitted_qty,
+            avg_price=avg_price,
+            order_id=str(getattr(order, "id", "")),
+            submitted_qty=submitted_qty,
+            filled_qty=filled_qty,
+            commission=commission,
+            submitted_at=_iso(getattr(order, "submitted_at", None)),
+            filled_at=_iso(getattr(order, "filled_at", None)),
+            status=str(getattr(order, "status", "")),
+        )
+
+    def _await_fill(self, order_id: str):
+        """Poll an order until it reaches a terminal state or the timeout, so the
+        returned order carries the real fill (a just-submitted order is empty)."""
+        import time
+
+        terminal = {"filled", "canceled", "cancelled", "rejected", "expired", "done_for_day"}
+        deadline = time.monotonic() + config.ORDER_FILL_TIMEOUT_S
+        order = self._client.get_order_by_id(order_id)
+        while str(getattr(order, "status", "")).lower() not in terminal:
+            if time.monotonic() >= deadline:
+                break
+            if self._poll_interval_s:
+                time.sleep(self._poll_interval_s)
+            order = self._client.get_order_by_id(order_id)
+        return order
+
+    def last_exit_fill(self, symbol: str) -> Fill | None:
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        req = GetOrdersRequest(status=QueryOrderStatus.CLOSED, symbols=[symbol], limit=20)
+        sells = [
+            o for o in self._client.get_orders(filter=req)
+            if str(getattr(o, "side", "")).lower().endswith("sell")
+            and str(getattr(o, "status", "")).lower() == "filled"
+        ]
+        if not sells:
+            return None
+        sells.sort(key=lambda o: _iso(getattr(o, "filled_at", None)), reverse=True)
+        return self._fill_from_order(sells[0], symbol, "sell")
 
     def submit_bracket(
         self,
@@ -156,13 +235,10 @@ class AlpacaStockBroker(_AlpacaBrokerBase):
             client_order_id=client_order_id,
         )
         order = self._client.submit_order(req)
-        return Fill(
-            symbol=symbol,
-            side=side,
-            qty=float(order.qty),
-            avg_price=float(order.filled_avg_price or 0.0),
-            order_id=str(order.id),
-        )
+        # Wait for the parent entry to fill so we capture the real price/qty; the
+        # stop/take legs rest on the exchange and are handled on later ticks.
+        order = self._await_fill(order.id)
+        return self._fill_from_order(order, symbol, side)
 
     def cancel_open_orders(self, symbol: str) -> None:
         from alpaca.trading.enums import QueryOrderStatus
@@ -191,13 +267,8 @@ class AlpacaStockBroker(_AlpacaBrokerBase):
             client_order_id=client_order_id,
         )
         order = self._client.submit_order(req)
-        return Fill(
-            symbol=symbol,
-            side=side,
-            qty=float(order.qty),
-            avg_price=float(order.filled_avg_price or 0.0),
-            order_id=str(order.id),
-        )
+        order = self._await_fill(order.id)
+        return self._fill_from_order(order, symbol, side)
 
     def is_market_open(self) -> bool:
         return bool(self._client.get_clock().is_open)
