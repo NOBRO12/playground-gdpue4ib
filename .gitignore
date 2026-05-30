@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.env
+data/agent.db
+data/agent.db-journal
+data/agent.db-wal
+data/agent.db-shm
+data/live_state.json
+data/live_state.json.tmp
+data/mock_broker.json
+data/mock_broker.json.tmp

@@ -1,0 +1,20 @@
+{
+  "type": "donchian",
+  "symbol": "SPY",
+  "timeframe": "1d",
+  "params": {
+    "entry_lookback": 20,
+    "exit_lookback": 10
+  },
+  "filters": {
+    "adx_min": 20,
+    "vol_max": null
+  },
+  "risk": {
+    "atr_mult_stop": 1.5,
+    "take_profit_r": 3.0,
+    "position_pct": 0.10
+  },
+  "version": "v-challenger-001",
+  "parent": "v0-baseline"
+}
