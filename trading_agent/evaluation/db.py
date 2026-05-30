@@ -79,6 +79,26 @@ SCHEMA = [
         detail_json TEXT
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS executions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL,
+        version TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        side TEXT NOT NULL,
+        order_type TEXT NOT NULL,
+        intended_px REAL NOT NULL,
+        fill_px REAL NOT NULL,
+        slippage_bps REAL NOT NULL,
+        intended_qty REAL NOT NULL,
+        filled_qty REAL NOT NULL,
+        commission_usd REAL NOT NULL,
+        latency_ms REAL,
+        client_order_id TEXT,
+        order_id TEXT,
+        status TEXT
+    )
+    """,
 ]
 
 

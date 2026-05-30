@@ -251,14 +251,7 @@ def _realized_edge(
         (symbol, version),
     ).fetchall()
     pnls = [float(r["pnl_usd"]) for r in rows]
-    n = len(pnls)
-    wins = [x for x in pnls if x > 0]
-    losses = [-x for x in pnls if x < 0]
-    if not wins or not losses:
-        return n, None, None
-    win_rate = len(wins) / n
-    payoff_ratio = (sum(wins) / len(wins)) / (sum(losses) / len(losses))
-    return n, win_rate, payoff_ratio
+    return sizing.edge_from_pnls(pnls)
 
 
 def _status(args: argparse.Namespace) -> int:

@@ -17,6 +17,26 @@ size *down* from the ceiling enforced by ``MAX_POSITION_PCT``.
 from __future__ import annotations
 
 
+def edge_from_pnls(
+    pnls: list[float],
+) -> tuple[int, float | None, float | None]:
+    """Realized (n, win_rate, payoff_ratio) from a list of trade P&Ls.
+
+    payoff_ratio = average win / average loss. Returns (n, None, None) unless
+    there is at least one win AND one loss to estimate both sides from. Shared by
+    the live loop (P&Ls from the DB) and the backtester's Kelly replay (P&Ls
+    accrued in-memory) so both size off an identical edge definition.
+    """
+    n = len(pnls)
+    wins = [x for x in pnls if x > 0]
+    losses = [-x for x in pnls if x < 0]
+    if not wins or not losses:
+        return n, None, None
+    win_rate = len(wins) / n
+    payoff_ratio = (sum(wins) / len(wins)) / (sum(losses) / len(losses))
+    return n, win_rate, payoff_ratio
+
+
 def kelly_risk_fraction(win_rate: float, payoff_ratio: float) -> float:
     """Full-Kelly fraction of equity to risk per trade for a win/loss bet.
 

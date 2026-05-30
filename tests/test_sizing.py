@@ -1,6 +1,24 @@
 from __future__ import annotations
 
-from trading_agent.execution.sizing import kelly_risk_fraction, size_position
+from trading_agent.execution.sizing import (
+    edge_from_pnls,
+    kelly_risk_fraction,
+    size_position,
+)
+
+
+def test_edge_from_pnls_basic():
+    # 3 wins (+20 each), 2 losses (-10 each) -> p=0.6, payoff=20/10=2.0
+    n, win_rate, payoff = edge_from_pnls([20, 20, 20, -10, -10])
+    assert n == 5
+    assert abs(win_rate - 0.6) < 1e-9
+    assert abs(payoff - 2.0) < 1e-9
+
+
+def test_edge_from_pnls_needs_both_sides():
+    assert edge_from_pnls([1, 2, 3]) == (3, None, None)   # no losses
+    assert edge_from_pnls([-1, -2]) == (2, None, None)    # no wins
+    assert edge_from_pnls([]) == (0, None, None)
 
 
 def test_fixed_sizing_when_no_risk_target():

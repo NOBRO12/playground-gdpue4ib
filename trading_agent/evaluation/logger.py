@@ -103,3 +103,49 @@ def log_guardrail(conn: sqlite3.Connection, kind: str, detail: dict[str, Any]) -
         "INSERT INTO guardrail_events (ts, kind, detail_json) VALUES (?, ?, ?)",
         (_now(), kind, json.dumps(detail)),
     )
+
+
+def slippage_bps(side: str, intended_px: float, fill_px: float) -> float:
+    """Signed slippage in basis points, where POSITIVE means worse than intended
+    (a cost). Buying above intended or selling below intended both cost money."""
+    if intended_px <= 0:
+        return 0.0
+    raw = (fill_px - intended_px) / intended_px
+    signed = raw if side == "buy" else -raw  # selling low is the cost on exits
+    return signed * 1e4
+
+
+def log_execution(
+    conn: sqlite3.Connection,
+    *,
+    version: str,
+    symbol: str,
+    side: str,
+    order_type: str,
+    intended_px: float,
+    fill_px: float,
+    intended_qty: float,
+    filled_qty: float,
+    commission_usd: float = 0.0,
+    latency_ms: float | None = None,
+    client_order_id: str | None = None,
+    order_id: str | None = None,
+    status: str | None = None,
+) -> int:
+    """Persist one order's realized execution quality for backtest-vs-live
+    reconciliation. slippage_bps is derived so the report doesn't have to."""
+    cur = conn.execute(
+        """
+        INSERT INTO executions (
+            ts, version, symbol, side, order_type, intended_px, fill_px,
+            slippage_bps, intended_qty, filled_qty, commission_usd, latency_ms,
+            client_order_id, order_id, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            _now(), version, symbol, side, order_type, intended_px, fill_px,
+            slippage_bps(side, intended_px, fill_px), intended_qty, filled_qty,
+            commission_usd, latency_ms, client_order_id, order_id, status,
+        ),
+    )
+    return int(cur.lastrowid)
