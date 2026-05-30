@@ -22,6 +22,7 @@ from pathlib import Path
 
 from . import config
 from .evaluation import db, logger as evlogger
+from .evaluation import reconcile as reconcile_mod
 from .evaluation import regime as regime_mod
 from .execution import data, exits, sizing
 from .execution.broker import make_client_order_id
@@ -382,6 +383,24 @@ def _reset_kill_switch(args: argparse.Namespace) -> int:
     state.kill_switch_tripped = False
     state.save(s.live_state_path)
     print(f"kill switch cleared at {s.live_state_path}")
+    return 0
+
+
+def _reconcile(args: argparse.Namespace) -> int:
+    """Backtest-vs-live execution reconciliation: realized slippage/cost vs the
+    modeled and stressed assumptions, with a live-verification verdict."""
+    s = config.load()
+    modeled = config.BACKTEST_FEE_BPS + config.BACKTEST_SLIPPAGE_BPS
+    stress = modeled * config.PROMOTE_COST_STRESS_MULT
+    with db.session(s.db_path) as conn:
+        rows = conn.execute(
+            "SELECT symbol, side, slippage_bps, commission_usd, fill_px, "
+            "filled_qty, intended_qty, latency_ms FROM executions"
+        ).fetchall()
+    report = reconcile_mod.build_report(
+        rows, modeled_cost_bps=modeled, stress_cost_bps=stress
+    )
+    print(json.dumps(report, indent=2, default=str))
     return 0
 
 
@@ -814,6 +833,10 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("status").set_defaults(func=_status)
     sub.add_parser("reset-kill-switch").set_defaults(func=_reset_kill_switch)
+    sub.add_parser(
+        "reconcile",
+        help="backtest-vs-live execution report: realized slippage/cost + verdict",
+    ).set_defaults(func=_reconcile)
 
     args = parser.parse_args(argv)
     s = config.load()
